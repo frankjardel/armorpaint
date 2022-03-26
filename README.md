@@ -1,3 +1,6 @@
+dependencies:
+sudo apt install make g++ libxinerama-dev libxrandr-dev libasound2-dev libxi-dev mesa-common-dev libgl-dev libxcursor-dev libvulkan-dev libudev-dev
+
 ![](https://armorpaint.org/img/git.jpg)
 
 armorpaint
