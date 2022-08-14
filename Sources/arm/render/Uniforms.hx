@@ -66,7 +66,7 @@ class Uniforms {
 			case "_brushHardness": {
 				var decal = Context.tool == ToolDecal || Context.tool == ToolText;
 				var decalMask = Operator.shortcut(Config.keymap.decal_mask + "+" + Config.keymap.action_paint, ShortcutDown);
-				if (Context.tool != ToolBrush && Context.tool != ToolEraser && !decalMask) return 1.0;
+				if (Context.tool != ToolBrush && Context.tool != ToolEraser && Context.tool != ToolClone && !decalMask) return 1.0;
 				var val = Context.brushHardness * Context.brushNodesHardness;
 				var pen = Input.getPen();
 				if (Config.raw.pressure_hardness && pen.down()) {
@@ -106,19 +106,19 @@ class Uniforms {
 				return Context.layer.decalMat.getScale().z * 0.5;
 			}
 			case "_pickerOpacity": {
-				return Context.swatch.opacity;
+				return Context.pickedColor.opacity;
 			}
 			case "_pickerOcclusion": {
-				return Context.swatch.occlusion;
+				return Context.pickedColor.occlusion;
 			}
 			case "_pickerRoughness": {
-				return Context.swatch.roughness;
+				return Context.pickedColor.roughness;
 			}
 			case "_pickerMetallic": {
-				return Context.swatch.metallic;
+				return Context.pickedColor.metallic;
 			}
 			case "_pickerHeight": {
-				return Context.swatch.height;
+				return Context.pickedColor.height;
 			}
 		}
 		if (MaterialParser.script_links != null) {
@@ -159,7 +159,7 @@ class Uniforms {
 				if (Config.raw.pressure_angle && pen.down()) {
 					angle *= pen.pressure * Config.raw.pressure_sensitivity;
 				}
-				vec.set(Math.cos(angle), Math.sin(angle), 0);
+				vec.set(Math.cos(-angle), Math.sin(-angle), 0);
 				return vec;
 			}
 			case "_texpaintSize": {
@@ -206,14 +206,26 @@ class Uniforms {
 			}
 			case "_pickerBase": {
 				v = iron.object.Uniforms.helpVec;
-				v.set(Context.swatch.base.R, Context.swatch.base.G, Context.swatch.base.B);
+				v.set(Context.pickedColor.base.R, Context.pickedColor.base.G, Context.pickedColor.base.B);
 				return v;
 			}
 			case "_pickerNormal": {
 				v = iron.object.Uniforms.helpVec;
-				v.set(Context.swatch.normal.R, Context.swatch.normal.G, Context.swatch.normal.B);
+				v.set(Context.pickedColor.normal.R, Context.pickedColor.normal.G, Context.pickedColor.normal.B);
 				return v;
 			}
+			#if arm_physics
+			case "_particleHit": {
+				v = iron.object.Uniforms.helpVec;
+				v.set(Context.particleHitX, Context.particleHitY, Context.particleHitZ);
+				return v;
+			}
+			case "_particleHitLast": {
+				v = iron.object.Uniforms.helpVec;
+				v.set(Context.lastParticleHitX, Context.lastParticleHitY, Context.lastParticleHitZ);
+				return v;
+			}
+			#end
 		}
 
 		return v;
@@ -305,6 +317,13 @@ class Uniforms {
 					iron.App.notifyOnInit(_init);
 				}
 				return UVUtil.trianglemap;
+			}
+			case "_texuvislandmap": {
+				function _init() {
+					UVUtil.cacheUVIslandMap();
+				}
+				iron.App.notifyOnInit(_init);
+				return UVUtil.uvislandmapCached ? UVUtil.uvislandmap : RenderPath.active.renderTargets.get("empty_black").image;
 			}
 			case "_texdilatemap": {
 				return UVUtil.dilatemap;

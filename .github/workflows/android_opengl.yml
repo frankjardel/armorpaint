@@ -1,0 +1,21 @@
+name: Android (OpenGL)
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Get Submodules
+      run: git submodule update --init --recursive
+    - name: Compile
+      run: armorcore/Kinc/make --from armorcore android -g opengl

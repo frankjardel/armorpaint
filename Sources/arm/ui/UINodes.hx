@@ -1,12 +1,14 @@
 package arm.ui;
 
 import haxe.Json;
+import kha.Color;
 import kha.Image;
 import kha.System;
 import zui.Zui;
 import zui.Id;
 import zui.Nodes;
 import iron.system.Input;
+import iron.system.Time;
 import arm.shader.NodesMaterial;
 import arm.shader.MaterialParser;
 import arm.node.NodesBrush;
@@ -15,6 +17,7 @@ import arm.util.RenderUtil;
 import arm.ui.UIHeader;
 import arm.Enums;
 import arm.Project;
+import arm.ProjectFormat.TSwatchColor;
 
 @:access(zui.Zui)
 @:access(zui.Nodes)
@@ -30,11 +33,10 @@ class UINodes {
 
 	public var ui: Zui;
 	public var canvasType = CanvasMaterial;
-	var drawMenu = false;
 	var showMenu = false;
+	var showMenuFirst = true;
 	var hideMenu = false;
 	var menuCategory = 0;
-	var addNodeButton = false;
 	var popupX = 0.0;
 	var popupY = 0.0;
 
@@ -43,14 +45,15 @@ class UINodes {
 	var recompileMatFinal = false;
 	var nodeSearchSpawn: TNode = null;
 	var nodeSearchOffset = 0;
-	var nodeSearchLast = "";
 	var lastCanvas: TNodeCanvas = null;
 	var lastNodeSelected: TNode = null;
 	var releaseLink = false;
+	var isNodeMenuOperation = false;
 
 	public var grid: Image = null;
 	public var hwnd = Id.handle();
 	public var groupStack: Array<TNodeGroup> = [];
+	public var controlsDown = false;
 
 	public function new() {
 		inst = this;
@@ -66,7 +69,7 @@ class UINodes {
 		Nodes.onCanvasControl = onCanvasControl;
 
 		var scale = Config.raw.window_scale;
-		ui = new Zui({theme: App.theme, font: App.font, color_wheel: App.colorWheel, scaleFactor: scale});
+		ui = new Zui({ theme: App.theme, font: App.font, color_wheel: App.colorWheel, black_white_gradient: App.blackWhiteGradient, scaleFactor: scale });
 		ui.scrollEnabled = false;
 	}
 
@@ -89,7 +92,16 @@ class UINodes {
 					var n = nodes.nodesSelected[0];
 					if (linkDrag.to_id == -1 && n.inputs.length > 0) {
 						linkDrag.to_id = n.id;
+						var fromType = node.outputs[linkDrag.from_socket].type;
+						// 1. step: Connect to the first socket.
 						linkDrag.to_socket = 0;
+						// 2. step: Try to find the first type-matching socket and use it if present.
+						for (socket in n.inputs) {
+							if (socket.type == fromType) {
+								linkDrag.to_socket = n.inputs.indexOf(socket);
+								break;
+							}
+						}
 						getCanvas(true).links.push(linkDrag);
 					}
 					else if (linkDrag.from_id == -1 && n.outputs.length > 0) {
@@ -229,6 +241,10 @@ class UINodes {
 
 			// Node context menu
 			if (!Nodes.socketReleased) {
+				var numberOfEntries = 5;
+				if (canvasType == CanvasMaterial) ++numberOfEntries;
+				if (selected != null && selected.type == "RGB") ++numberOfEntries;
+				
 				UIMenu.draw(function(uiMenu: Zui) {
 					uiMenu._y += 1;
 					var protected = selected == null ||
@@ -238,68 +254,134 @@ class UINodes {
 									selected.type == "BrushOutputNode";
 					uiMenu.enabled = !protected;
 					if (menuButton(uiMenu, tr("Cut"), "ctrl+x")) {
-						Zui.isCopy = true;
-						Zui.isCut = true;
+						App.notifyOnNextFrame(function() {
+							hwnd.redraws = 2;
+							Zui.isCopy = true;
+							Zui.isCut = true;
+							isNodeMenuOperation = true;
+						});
 					}
 					if (menuButton(uiMenu, tr("Copy"), "ctrl+c")) {
-						Zui.isCopy = true;
+						App.notifyOnNextFrame(function() {
+							Zui.isCopy = true;
+							isNodeMenuOperation = true;
+						});
 					}
 					uiMenu.enabled = Nodes.clipboard != "";
 					if (menuButton(uiMenu, tr("Paste"), "ctrl+v")) {
-						Zui.isPaste = true;
+						App.notifyOnNextFrame(function() {
+							hwnd.redraws = 2;
+							Zui.isPaste = true;
+							isNodeMenuOperation = true;
+						});
 					}
 					uiMenu.enabled = !protected;
 					if (menuButton(uiMenu, tr("Delete"), "delete")) {
-						ui.isDeleteDown = true;
-						App.notifyOnNextFrame(function() { ui.isDeleteDown = false; });
+						App.notifyOnNextFrame(function() {
+							hwnd.redraws = 2;
+							ui.isDeleteDown = true;
+							isNodeMenuOperation = true;
+						});
 					}
 					if (menuButton(uiMenu, tr("Duplicate"))) {
-						Zui.isCopy = true;
-						Zui.isPaste = true;
+						App.notifyOnNextFrame(function() {
+							hwnd.redraws = 2;
+							Zui.isCopy = true;
+							Zui.isPaste = true;
+							isNodeMenuOperation = true;
+						});
+					}
+					if (selected != null && selected.type == "RGB") {
+						if (menuButton(uiMenu, tr("Add Swatch"))) {
+							var color = selected.outputs[0].default_value;
+							var newSwatch = Project.makeSwatch(Color.fromFloats(color[0], color[1], color[2], color[3]));
+							Context.setSwatch(newSwatch);
+							Project.raw.swatches.push(newSwatch);
+							UIStatus.inst.statusHandle.redraws = 1;
+						}
+					}
+					if (canvasType == CanvasMaterial) {
+						menuSeparator(uiMenu);
+						if (menuButton(uiMenu, tr("2D View"))) {
+							UISidebar.inst.show2DView(View2DNode);
+						}
 					}
 					uiMenu.enabled = true;
-				}, 5);
+				}, numberOfEntries);
+			}
+		}
+		if (ui.inputReleased) {
+			var nodes = getNodes();
+			var canvas = getCanvas(true);
+			for (node in canvas.nodes) {
+				if (ui.getInputInRect(ui._windowX + nodes.NODE_X(node), ui._windowY + nodes.NODE_Y(node), nodes.NODE_W(node), nodes.NODE_H(canvas, node))) {
+					if (node == nodes.nodesSelected[0]) {
+						UIView2D.inst.hwnd.redraws = 2;
+						if (Time.time() - Context.selectTime < 0.25) UISidebar.inst.show2DView(View2DNode);
+						Context.selectTime = Time.time();
+					}
+					break;
+				}
 			}
 		}
 	}
 
 	public static function onNodeRemove(node: TNode) {
-		if (node.type == "GROUP") { // Remove unused groups
-			var found = false;
-			var canvases: Array<TNodeCanvas> = [];
-			for (m in Project.materials) canvases.push(m.canvas);
-			for (m in Project.materialGroups) canvases.push(m.canvas);
-			for (canvas in canvases) {
-				for (n in canvas.nodes) {
-					if (n.type == "GROUP" && n.name == node.name) {
-						found = true;
-						break;
-					}
-				}
-			}
-			if (!found) {
-				for (g in Project.materialGroups) {
-					if (g.canvas.name == node.name) {
-						Project.materialGroups.remove(g);
-						break;
-					}
-				}
-			}
-		}
 	}
 
 	function onCanvasControl(): zui.Nodes.CanvasControl {
-		return getCanvasControl(ui);
+		return getCanvasControl(ui, inst);
 	}
 
-	public static function getCanvasControl(ui: Zui): zui.Nodes.CanvasControl {
+	public static function getCanvasControl(ui: Zui, parent: Dynamic): zui.Nodes.CanvasControl {
+		if (Config.raw.wrap_mouse && parent.controlsDown) {
+			if (ui.inputX < ui._windowX) {
+				@:privateAccess ui.inputX = ui._windowX + ui._windowW;
+				Krom.setMousePosition(0, Std.int(ui.inputX), Std.int(ui.inputY));
+			}
+			else if (ui.inputX > ui._windowX + ui._windowW) {
+				@:privateAccess ui.inputX = ui._windowX;
+				Krom.setMousePosition(0, Std.int(ui.inputX), Std.int(ui.inputY));
+			}
+			else if (ui.inputY < ui._windowY) {
+				@:privateAccess ui.inputY = ui._windowY + ui._windowH;
+				Krom.setMousePosition(0, Std.int(ui.inputX), Std.int(ui.inputY));
+			}
+			else if (ui.inputY > ui._windowY + ui._windowH) {
+				@:privateAccess ui.inputY = ui._windowY;
+				Krom.setMousePosition(0, Std.int(ui.inputX), Std.int(ui.inputY));
+			}
+		}
+
+		if (Operator.shortcut(Config.keymap.action_pan, ShortcutStarted) ||
+			Operator.shortcut(Config.keymap.action_zoom, ShortcutStarted) ||
+			ui.inputStartedR ||
+			ui.inputWheelDelta != 0.0) {
+			parent.controlsDown = true;
+		}
+		else if (!Operator.shortcut(Config.keymap.action_pan, ShortcutDown) &&
+			!Operator.shortcut(Config.keymap.action_zoom, ShortcutDown) &&
+			!ui.inputDownR &&
+			ui.inputWheelDelta == 0.0) {
+			parent.controlsDown = false;
+		}
+		if (!parent.controlsDown) {
+			return {
+				panX: 0,
+				panY: 0,
+				zoom: 0
+			}
+		}
+
 		var pan = ui.inputDownR || Operator.shortcut(Config.keymap.action_pan, ShortcutDown);
 		var zoomDelta = Operator.shortcut(Config.keymap.action_zoom, ShortcutDown) ? getZoomDelta(ui) / 100.0 : 0.0;
-		return {
+		var control = {
 			panX: pan ? ui.inputDX : 0.0,
 			panY: pan ? ui.inputDY : 0.0,
 			zoom: ui.inputWheelDelta != 0.0 ? -ui.inputWheelDelta / 10 : zoomDelta
-		}
+		};
+		if (App.isComboSelected()) control.zoom = 0.0;
+		return control;
 	}
 
 	static function getZoomDelta(ui: Zui): Float {
@@ -352,14 +434,6 @@ class UINodes {
 		if (mx < wx || mx > wx + ww || my < wy) return;
 		if (ui.isTyping || !ui.inputEnabled) return;
 
-		if (addNodeButton) {
-			showMenu = true;
-			addNodeButton = false;
-		}
-		else if (mouse.released()) {
-			hideMenu = true;
-		}
-
 		var nodes = getNodes();
 		if (nodes.nodesSelected.length > 0 && ui.isKeyPressed) {
 			if (ui.key == kha.input.KeyCode.Left) for (n in nodes.nodesSelected) n.x -= 1;
@@ -394,22 +468,16 @@ class UINodes {
 		var first = true;
 		UIMenu.draw(function(ui: Zui) {
 			ui.fill(0, 0, ui._w / ui.SCALE(), ui.t.ELEMENT_H * 8, ui.t.SEPARATOR_COL);
-			ui.textInput(searchHandle, "");
+			var search = ui.textInput(searchHandle, "", Left, true, true);
 			ui.changed = false;
 			if (first) {
 				first = false;
-				ui.startTextEdit(searchHandle); // Focus search bar
-				ui.textSelected = searchHandle.text;
 				searchHandle.text = "";
-				nodeSearchLast = "";
+				ui.startTextEdit(searchHandle); // Focus search bar
 			}
-			var search = searchHandle.text;
-			if (ui.textSelected != "") search = ui.textSelected;
 
-			if (search != nodeSearchLast) {
-				nodeSearchOffset = 0;
-				nodeSearchLast = search;
-			}
+			if (searchHandle.changed) nodeSearchOffset = 0;
+			
 			if (ui.isKeyPressed) { // Move selection
 				if (ui.key == kha.input.KeyCode.Down && nodeSearchOffset < 6) nodeSearchOffset++;
 				if (ui.key == kha.input.KeyCode.Up && nodeSearchOffset > 0) nodeSearchOffset--;
@@ -501,6 +569,9 @@ class UINodes {
 			}
 			else {
 				Layers.isFillMaterial() ? Layers.updateFillLayers() : RenderUtil.makeMaterialPreview();
+				if (UIView2D.inst.show && UIView2D.inst.type == View2DNode) {
+					UIView2D.inst.hwnd.redraws = 2;
+				}
 			}
 
 			UISidebar.inst.hwnd1.redraws = 2;
@@ -539,8 +610,7 @@ class UINodes {
 
 		if (!show || System.windowWidth() == 0 || System.windowHeight() == 0) return;
 
-		if (!App.uiEnabled && ui.inputRegistered) ui.unregisterInput();
-		if (App.uiEnabled && !ui.inputRegistered) ui.registerInput();
+		ui.inputEnabled = App.uiEnabled;
 
 		g.end();
 
@@ -582,12 +652,25 @@ class UINodes {
 
 			// Nodes
 			var _inputEnabled = ui.inputEnabled;
-			ui.inputEnabled = _inputEnabled && !drawMenu;
+			ui.inputEnabled = _inputEnabled && !showMenu;
 			ui.windowBorderRight = Config.raw.layout[LayoutSidebarW];
 			ui.windowBorderTop = UIHeader.inst.headerh * 2;
 			ui.windowBorderBottom = Config.raw.layout[LayoutStatusH];
 			nodes.nodeCanvas(ui, c);
 			ui.inputEnabled = _inputEnabled;
+
+			if (nodes.colorPickerCallback != null) {
+				Context.colorPickerPreviousTool = Context.tool;
+				Context.selectTool(ToolPicker);
+				var tmp = nodes.colorPickerCallback;
+				Context.colorPickerCallback = function(color: TSwatchColor) {
+					tmp(color.base);
+					UINodes.inst.hwnd.redraws = 2;
+					if (Config.raw.material_live)
+						UINodes.inst.canvasChanged();
+				};
+				nodes.colorPickerCallback = null;
+			}
 
 			// Remove nodes with unknown id for this canvas type
 			if (Zui.isPaste) {
@@ -617,6 +700,10 @@ class UINodes {
 						i--;
 					}
 				}
+			}
+
+			if (isNodeMenuOperation) {
+				Zui.isCopy = Zui.isCut = Zui.isPaste = ui.isDeleteDown = false;
 			}
 
 			// Recompile material on change
@@ -702,25 +789,30 @@ class UINodes {
 			h.text = c.name;
 			var newName = ui.textInput(h, "", Right);
 
-			if (h.changed && groupStack.length > 0) { // Check whether renaming is possible and update group links
-				var canRename = true;
-				for (m in Project.materialGroups) {
-					if (m.canvas.name == newName) canRename = false; // Name already used
-				}
+			if (h.changed) { // Check whether renaming is possible and update group links
+				if (groupStack.length > 0) {
+					var canRename = true;
+					for (m in Project.materialGroups) {
+						if (m.canvas.name == newName) canRename = false; // Name already used
+					}
 
-				if (canRename) {
-					var oldName = c.name;
-					c.name = newName;
-					var canvases: Array<TNodeCanvas> = [];
-					for (m in Project.materials) canvases.push(m.canvas);
-					for (m in Project.materialGroups) canvases.push(m.canvas);
-					for (canvas in canvases) {
-						for (n in canvas.nodes) {
-							if (n.type == "GROUP" && n.name == oldName) {
-								n.name = c.name;
+					if (canRename) {
+						var oldName = c.name;
+						c.name = newName;
+						var canvases: Array<TNodeCanvas> = [];
+						for (m in Project.materials) canvases.push(m.canvas);
+						for (m in Project.materialGroups) canvases.push(m.canvas);
+						for (canvas in canvases) {
+							for (n in canvas.nodes) {
+								if (n.type == "GROUP" && n.name == oldName) {
+									n.name = c.name;
+								}
 							}
 						}
 					}
+				}
+				else {
+					c.name = newName;
 				}
 			}
 			ui.t.ACCENT_COL = _ACCENT_COL;
@@ -750,8 +842,8 @@ class UINodes {
 
 			var cats = canvasType == CanvasMaterial ? NodesMaterial.categories : NodesBrush.categories;
 			for (i in 0...cats.length) {
-				if ((ui.button(tr(cats[i]), Left) && UISidebar.inst.ui.comboSelectedHandle == null) || (ui.isHovered && drawMenu)) {
-					addNodeButton = true;
+				if ((ui.button(tr(cats[i]), Left)) || (ui.isHovered && showMenu)) {
+					showMenu = true;
 					menuCategory = i;
 					popupX = wx + ui._x;
 					popupY = wy + ui._y;
@@ -770,11 +862,11 @@ class UINodes {
 			ui.t.BUTTON_COL = _BUTTON_COL;
 		}
 
-		ui.end(!drawMenu);
+		ui.end(!showMenu);
 
 		g.begin(false);
 
-		if (drawMenu) {
+		if (showMenu) {
 			var list = canvasType == CanvasMaterial ? NodesMaterial.list : NodesBrush.list;
 			var numNodes = list[menuCategory].length;
 
@@ -811,7 +903,9 @@ class UINodes {
 			if (isGroupCategory) {
 				for (g in Project.materialGroups) {
 					ui.fill(0, 1, ui._w / ui.SCALE(), ui.t.BUTTON_H + 2, ui.t.ACCENT_SELECT_COL);
+					ui.fill(1, 1, ui._w / ui.SCALE() - 2, ui.t.BUTTON_H + 1, ui.t.SEPARATOR_COL);
 					ui.enabled = canPlaceGroup(g.canvas.name);
+					ui.row([5 / 6, 1 / 6]);
 					if (ui.button("      " + g.canvas.name, Left)) {
 						pushUndo();
 						var canvas = getCanvas(true);
@@ -821,9 +915,18 @@ class UINodes {
 						nodes.nodesSelected = [node];
 						nodes.nodesDrag = true;
 					}
+					ui.enabled = !Project.isMaterialGroupInUse(g);
+					if (ui.button("x", Center)) {
+						History.deleteMaterialGroup(g);
+						Project.materialGroups.remove(g);
+					}
+					
 					ui.enabled = true;
 				}
 			}
+
+			hideMenu = ui.comboSelectedHandle == null && !showMenuFirst && (ui.changed || ui.inputReleased || ui.inputReleasedR || ui.isEscapeDown);
+			showMenuFirst = false;
 
 			ui.t.BUTTON_COL = _BUTTON_COL;
 			ui.t.BUTTON_H = _BUTTON_H;
@@ -831,13 +934,9 @@ class UINodes {
 			ui.endRegion();
 		}
 
-		if (showMenu) {
-			showMenu = false;
-			drawMenu = true;
-		}
 		if (hideMenu) {
-			hideMenu = false;
-			drawMenu = false;
+			showMenu = false;
+			showMenuFirst = true;
 		}
 	}
 
@@ -907,12 +1006,11 @@ class UINodes {
 		getNodes().nodesSelected = [n];
 	}
 
-	public function acceptSwatchDrag(index: Int) {
+	public function acceptSwatchDrag(swatch: TSwatchColor) {
 		pushUndo();
 		var g = groupStack.length > 0 ? groupStack[groupStack.length - 1] : null;
 		var n = NodesMaterial.createNode("RGB", g);
-		var color = Project.raw.swatches[index].base;
-		n.outputs[0].default_value = [color.R, color.G, color.B, color.A];
+		n.outputs[0].default_value = [swatch.base.R, swatch.base.G, swatch.base.B, swatch.base.A];
 		getNodes().nodesSelected = [n];
 	}
 
@@ -1011,5 +1109,14 @@ class UINodes {
 		label = "";
 		#end
 		return ui.button(Config.buttonSpacing + text, Config.buttonAlign, label);
+	}
+
+	static function menuSeparator(ui: Zui) {
+		ui._y++;
+		#if arm_touchui
+		ui.fill(0, 0, ui._w / ui.SCALE(), 1, ui.t.ACCENT_SELECT_COL);
+		#else
+		ui.fill(22, 0, ui._w / ui.SCALE() - 22, 1, ui.t.ACCENT_SELECT_COL);
+		#end
 	}
 }

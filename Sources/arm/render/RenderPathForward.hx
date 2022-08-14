@@ -89,7 +89,12 @@ class RenderPathForward {
 
 		path.setTarget(buf);
 		path.bindTarget(gbuffer1, "tex");
-		path.drawShader("shader_datas/compositor_pass/compositor_pass");
+		if (Context.viewportMode == ViewLit) {
+			path.drawShader("shader_datas/compositor_pass/compositor_pass");
+		}
+		else {
+			path.drawShader("shader_datas/copy_pass/copy_pass");
+		}
 
 		if (output == "") {
 			path.setTarget(buf);
@@ -147,7 +152,11 @@ class RenderPathForward {
 
 	static function drawSplit() {
 		if (Context.splitView && !Context.paint2dView) {
+			#if (kha_metal || krom_android)
+			Context.ddirty = 2;
+			#else
 			Context.ddirty = 1;
+			#end
 			var cam = Scene.active.camera;
 
 			Context.viewIndex = Context.viewIndex == 0 ? 1 : 0;

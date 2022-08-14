@@ -20,7 +20,7 @@ import arm.render.RenderPathForwardVR;
 class Main {
 
 	public static inline var title = "ArmorPaint";
-	public static var version = "0.8";
+	public static var version = "0.9";
 	public static var sha = BuildMacros.sha().substr(1, 7);
 	public static var date = BuildMacros.date().split(" ")[0];
 	static var tasks: Int;
@@ -62,6 +62,7 @@ class Main {
 			"World_radiance_8.k",
 			"brdf.k",
 			"color_wheel.k",
+			"black_white_gradient.k",
 			"cursor.k",
 			"icons.k",
 			"icons2x.k",
@@ -113,9 +114,6 @@ class Main {
 
 		tasks = 1;
 		tasks++; Config.load(function() { tasks--; start(); });
-		#if arm_physics
-		tasks++; arm.plugin.PhysicsWorld.load();
-		#end
 		tasks--; start();
 	}
 
@@ -151,9 +149,6 @@ class Main {
 
 					RenderPath.setActive(path);
 					new arm.App();
-					#if arm_physics
-					o.addTrait(new arm.plugin.PhysicsWorld());
-					#end
 				});
 			});
 		});

@@ -16,9 +16,6 @@ class Inc {
 	static var path: RenderPath;
 	public static var superSample = 1.0;
 
-	static var pointIndex = 0;
-	static var spotIndex = 0;
-	static var lastFrame = -1;
 	static var lastX = -1.0;
 	static var lastY = -1.0;
 
@@ -107,6 +104,7 @@ class Inc {
 			compass.transform.scale.set(0.4, 0.4, 0.4);
 			compass.transform.buildMatrix();
 
+			compass.frustumCulling = false;
 			compass.render(currentG, "overlay", []);
 
 			cam.P = P;
@@ -136,7 +134,9 @@ class Inc {
 				arm.Camera.inst.views[Context.viewIndexLast].setFrom(cam.transform.local);
 			}
 
-			if (Context.viewIndexLast != Context.viewIndex) {
+			var decal = Context.tool == ToolDecal || Context.tool == ToolText;
+
+			if (Context.viewIndexLast != Context.viewIndex || decal || !Config.raw.brush_3d) {
 				// Redraw on current viewport change
 				Context.ddirty = 1;
 			}

@@ -3,6 +3,7 @@ package arm.ui;
 import haxe.io.Bytes;
 import kha.Image;
 import kha.System;
+import kha.input.KeyCode;
 import zui.Zui;
 import zui.Id;
 import iron.data.Data;
@@ -39,10 +40,9 @@ class UISidebar {
 	public var ui: Zui;
 	public var hwnd0 = Id.handle();
 	public var hwnd1 = Id.handle();
-	public var hwnd2 = Id.handle();
 	public var htab0 = Id.handle();
 	public var htab1 = Id.handle();
-	public var htab2 = Id.handle();
+	public var hminimize = Id.handle();
 	var borderStarted = 0;
 	var borderHandle: Handle = null;
 
@@ -94,9 +94,9 @@ class UISidebar {
 
 		if (Context.emptyEnvmap == null) {
 			var b = Bytes.alloc(4);
-			b.set(0, 3);
-			b.set(1, 3);
-			b.set(2, 3);
+			b.set(0, 2);
+			b.set(1, 2);
+			b.set(2, 2);
 			b.set(3, 255);
 			Context.emptyEnvmap = Image.fromBytes(b, 1, 1);
 		}
@@ -122,7 +122,7 @@ class UISidebar {
 		History.reset();
 
 		var scale = Config.raw.window_scale;
-		ui = new Zui( { theme: App.theme, font: App.font, scaleFactor: scale, color_wheel: App.colorWheel } );
+		ui = new Zui({ theme: App.theme, font: App.font, scaleFactor: scale, color_wheel: App.colorWheel, black_white_gradient: App.blackWhiteGradient });
 		Zui.onBorderHover = onBorderHover;
 		Zui.onTextHover = onTextHover;
 
@@ -229,7 +229,7 @@ class UISidebar {
 						Context.brushOpacityHandle.value = Context.brushOpacity;
 					}
 					else if (Operator.shortcut(Config.keymap.brush_angle, ShortcutDown)) {
-						Context.brushAngle -= mouse.movementX / 5;
+						Context.brushAngle += mouse.movementX / 5;
 						Context.brushAngle = Std.int(Context.brushAngle) % 360;
 						if (Context.brushAngle < 0) Context.brushAngle += 360;
 						Context.brushAngleHandle.value = Context.brushAngle;
@@ -265,9 +265,11 @@ class UISidebar {
 		var isTyping = ui.isTyping || UIView2D.inst.ui.isTyping || UINodes.inst.ui.isTyping;
 		if (!isTyping) {
 			if (Operator.shortcut(Config.keymap.select_material, ShortcutDown)) {
+				UISidebar.inst.hwnd1.redraws = 2;
 				for (i in 1...10) if (kb.started(i + "")) Context.selectMaterial(i - 1);
 			}
 			else if (Operator.shortcut(Config.keymap.select_layer, ShortcutDown)) {
+				UISidebar.inst.hwnd0.redraws = 2;
 				for (i in 1...10) if (kb.started(i + "")) Context.selectLayer(i - 1);
 			}
 		}
@@ -365,6 +367,49 @@ class UISidebar {
 				else if (Operator.shortcut(Config.keymap.view_orbit_opposite)) Viewport.orbitOpposite();
 				else if (Operator.shortcut(Config.keymap.view_zoom_in, ShortcutRepeat)) Viewport.zoom(0.2);
 				else if (Operator.shortcut(Config.keymap.view_zoom_out, ShortcutRepeat)) Viewport.zoom(-0.2);
+				else if (Operator.shortcut(Config.keymap.viewport_mode)) {
+					UIMenu.draw(function(ui: Zui) {
+						var modeHandle = Id.handle();
+						modeHandle.position = Context.viewportMode;
+						ui.text(tr("Viewport Mode"), Right, ui.t.HIGHLIGHT_COL);
+						var modes = [
+							tr("Lit"),
+							tr("Base Color"),
+							tr("Normal"),
+							tr("Occlusion"),
+							tr("Roughness"),
+							tr("Metallic"),
+							tr("Opacity"),
+							tr("Height"),
+							tr("Emission"),
+							tr("Subsurface"),
+							tr("TexCoord"),
+							tr("Object Normal"),
+							tr("Material ID"),
+							tr("Object ID"),
+							tr("Mask")
+						];
+						var shortcuts = ["l", "b", "n", "o", "r", "m", "a", "h", "e", "s", "t", "1", "2", "3", "4"];
+						#if (kha_direct3d12 || kha_vulkan)
+						modes.push(tr("Path Traced"));
+						shortcuts.push("p");
+						#end
+						for (i in 0...modes.length) {
+							ui.radio(modeHandle, i, modes[i], shortcuts[i]);
+						}
+
+						var index = shortcuts.indexOf(Keyboard.keyCode(ui.key));
+						if (ui.isKeyPressed && index != -1) {
+							modeHandle.position = index;
+							ui.changed = true;
+							Context.setViewportMode(modeHandle.position);
+						}
+						else if (modeHandle.changed) {
+							Context.setViewportMode(modeHandle.position);
+							ui.changed = true;
+						}
+					}, 16 #if (kha_direct3d12 || kha_vulkan) + 1 #end );
+				}
 			}
 		}
 
@@ -425,12 +470,6 @@ class UISidebar {
 							Config.raw.layout[LayoutSidebarH1] -= my;
 						}
 					}
-					else if (borderHandle == hwnd2 && borderStarted == SideTop) {
-						if (Config.raw.layout[LayoutSidebarH1] + my > 32 && Config.raw.layout[LayoutSidebarH2] - my > 32) {
-							Config.raw.layout[LayoutSidebarH1] += my;
-							Config.raw.layout[LayoutSidebarH2] -= my;
-						}
-					}
 				}
 			}
 		}
@@ -438,6 +477,66 @@ class UISidebar {
 			borderHandle = null;
 			App.isResizing = false;
 		}
+
+		#if arm_physics
+		if (Context.tool == ToolParticle && Context.particlePhysics && inViewport && !Context.paint2d) {
+			arm.util.ParticleUtil.initParticlePhysics();
+			var world = arm.plugin.PhysicsWorld.active;
+			world.lateUpdate();
+			Context.ddirty = 2;
+			Context.rdirty = 2;
+			if (mouse.started()) {
+				if (Context.particleTimer != null) {
+					iron.system.Tween.stop(Context.particleTimer);
+					Context.particleTimer.done();
+					Context.particleTimer = null;
+				}
+				History.pushUndo = true;
+				Context.particleHitX = Context.particleHitY = Context.particleHitZ = 0;
+				Scene.active.spawnObject(".Sphere", null, function(o: Object) {
+					iron.data.Data.getMaterial("Scene", ".Gizmo", function(md: MaterialData) {
+						var mo: MeshObject = cast o;
+						mo.name = ".Bullet";
+						mo.materials[0] = md;
+						mo.visible = true;
+
+						var camera = iron.Scene.active.camera;
+						var ct = camera.transform;
+						mo.transform.loc.set(ct.worldx(), ct.worldy(), ct.worldz());
+						mo.transform.scale.set(Context.brushRadius * 0.2, Context.brushRadius * 0.2, Context.brushRadius * 0.2);
+						mo.transform.buildMatrix();
+
+						var body = new arm.plugin.PhysicsBody();
+						body.shape = arm.plugin.PhysicsBody.ShapeType.ShapeSphere;
+						body.mass = 1.0;
+						body.ccd = true;
+						mo.transform.radius /= 10; // Lower ccd radius
+						mo.addTrait(body);
+						mo.transform.radius *= 10;
+
+						var ray = iron.math.RayCaster.getRay(mouse.viewX, mouse.viewY, camera);
+						body.applyImpulse(ray.direction.mult(0.15));
+
+						Context.particleTimer = iron.system.Tween.timer(5, mo.remove);
+					});
+				});
+			}
+
+			var pairs = world.getContactPairs(Context.paintBody);
+			if (pairs != null) {
+				for (p in pairs) {
+					Context.lastParticleHitX = Context.particleHitX != 0 ? Context.particleHitX : p.posA.x;
+					Context.lastParticleHitY = Context.particleHitY != 0 ? Context.particleHitY : p.posA.y;
+					Context.lastParticleHitZ = Context.particleHitZ != 0 ? Context.particleHitZ : p.posA.z;
+					Context.particleHitX = p.posA.x;
+					Context.particleHitY = p.posA.y;
+					Context.particleHitZ = p.posA.z;
+					Context.pdirty = 1;
+					break; // 1 pair for now
+				}
+			}
+		}
+		#end
 	}
 
 	public function toggleDistractFree() {
@@ -532,9 +631,30 @@ class UISidebar {
 				   Operator.shortcut(Config.keymap.brush_ruler + "+" + Config.keymap.action_paint, ShortcutDown) ||
 				   (Input.getPen().down() && !kb.down("alt"));
 
+		#if (krom_android || krom_ios)
+		if (Input.getPen().down()) {
+			Context.penPaintingOnly = true;
+		}
+		else if (Context.penPaintingOnly) {
+			down = false;
+		}
+		#end
+
+
+		#if arm_physics
+		if (Context.tool == ToolParticle && Context.particlePhysics) {
+			down = false;
+		}
+		#end
+
 		#if krom_ios
 		// No hover on iPad, decals are painted by pen release
-		if (decal) down = Input.getMouse().released() || Input.getPen().released();
+		if (decal) {
+			down = Input.getPen().released();
+			if (!Context.penPaintingOnly) {
+				down = down || Input.getMouse().released();
+			}
+		}
 		#end
 
 		if (down) {
@@ -559,7 +679,7 @@ class UISidebar {
 					if (Context.brushTime == 0 &&
 						!App.isDragging &&
 						!App.isResizing &&
-						@:privateAccess ui.comboSelectedHandle == null) { // Paint started
+						!App.isComboSelected()) { // Paint started
 
 						// Draw line
 						if (Operator.shortcut(Config.keymap.brush_ruler + "+" + Config.keymap.action_paint, ShortcutDown)) {
@@ -584,6 +704,9 @@ class UISidebar {
 							// @:privateAccess psys.seed++;
 							#end
 						}
+						else if (Context.tool == ToolFill && Context.fillTypeHandle.position == FillUVIsland) {
+							UVUtil.uvislandmapCached = false;
+						}
 					}
 					Context.brushTime += Time.delta;
 					if (Context.runBrush != null) Context.runBrush(0);
@@ -599,11 +722,20 @@ class UISidebar {
 			#end
 			Context.brushBlendDirty = true; // Update brush mask
 			Context.layerPreviewDirty = true; // Update layer preview
+
+			// New color id picked, update fill layer
+			if (Context.tool == ToolColorId && Context.layer.fill_layer != null) {
+				App.notifyOnNextFrame(function() {
+					Layers.updateFillLayer();
+					MakeMaterial.parsePaintMaterial(false);
+				});
+			}
 		}
 
 		if (Context.layersPreviewDirty) {
 			Context.layersPreviewDirty = false;
 			Context.layerPreviewDirty = false;
+			Context.maskPreviewLast = null;
 			if (Layers.pipeMerge == null) Layers.makePipe();
 			// Update all layer previews
 			for (l in Project.layers) {
@@ -621,6 +753,7 @@ class UISidebar {
 		}
 		if (Context.layerPreviewDirty && !Context.layer.isGroup()) {
 			Context.layerPreviewDirty = false;
+			Context.maskPreviewLast = null;
 			if (Layers.pipeMerge == null) Layers.makePipe();
 			// Update layer preview
 			var l = Context.layer;
@@ -646,12 +779,24 @@ class UISidebar {
 	}
 
 	public function render(g: kha.graphics2.Graphics) {
-		if (System.windowWidth() == 0 || System.windowHeight() == 0) return;
+		#if (krom_android || krom_ios)
+		if (!show) {
+			ui.inputEnabled = true;
+			g.end();
+			ui.begin(g);
+			if (ui.window(Id.handle(), 0, 0, 150, Std.int(ui.ELEMENT_H() + ui.ELEMENT_OFFSET()))) {
+				if (ui.button(tr("Close"))) {
+					toggleDistractFree();
+				}
+			}
+			ui.end();
+			g.begin(false);
+		}
+		#end
 
-		if (!App.uiEnabled && ui.inputRegistered) ui.unregisterInput();
-		if (App.uiEnabled && !ui.inputRegistered) ui.registerInput();
+		if (!show || System.windowWidth() == 0 || System.windowHeight() == 0) return;
 
-		if (!show) return;
+		ui.inputEnabled = App.uiEnabled;
 
 		g.end();
 		ui.begin(g);
@@ -672,13 +817,19 @@ class UISidebar {
 			TabBrushes.draw();
 			TabParticles.draw();
 		}
-		if (ui.window(hwnd2, tabx, Config.raw.layout[LayoutSidebarH0] + Config.raw.layout[LayoutSidebarH1], Config.raw.layout[LayoutSidebarW], Config.raw.layout[LayoutSidebarH2])) {
-			TabTextures.draw();
-			TabMeshes.draw();
-			TabFonts.draw();
-			TabSwatches.draw();
+		if (Config.raw.layout[LayoutSidebarW] == 0) {
+			var width = Std.int(ui.ops.font.width(ui.fontSize, "<<") + 25 * ui.SCALE());
+			if (ui.window(hminimize, System.windowWidth() - width, 0, width, Std.int(ui.BUTTON_H()))) {
+				ui._w = width;
+				if (ui.button("<<"))
+					Config.raw.layout[LayoutSidebarW] = Context.maximizedSidebarWidth != 0 ? Context.maximizedSidebarWidth : Std.int(UISidebar.defaultWindowW * Config.raw.window_scale);
+			}
 		}
-
+		if (htab0.changed && (htab0.position == Context.lastHtab0Position) && Config.raw.layout[LayoutSidebarW] != 0) {
+			Context.maximizedSidebarWidth = Config.raw.layout[LayoutSidebarW];
+			Config.raw.layout[LayoutSidebarW] = 0 ;
+		}
+		Context.lastHtab0Position = htab0.position;
 		ui.end();
 		g.begin(false);
 	}
@@ -725,13 +876,19 @@ class UISidebar {
 			}
 
 			// Show picked material next to cursor
-			if (Context.tool == ToolPicker && Context.pickerSelectMaterial) {
+			if (Context.tool == ToolPicker && Context.pickerSelectMaterial && Context.colorPickerCallback == null) {
 				var img = Context.material.imageIcon;
 				#if kha_opengl
 				g.drawScaledImage(img, mx + 10, my + 10 + img.height, img.width, -img.height);
 				#else
 				g.drawImage(img, mx + 10, my + 10);
 				#end
+			}
+			if (Context.tool == ToolPicker && Context.colorPickerCallback != null) {
+				var img = Res.get("icons.k");
+				var rect = Res.tile50(img, ToolPicker, 0);
+					
+				g.drawSubImage(img, mx + 10, my + 10, rect.x, rect.y, rect.w, rect.h);
 			}
 
 			var cursorImg = Res.get("cursor.k");
@@ -782,7 +939,7 @@ class UISidebar {
 
 						g.color = kha.Color.fromFloats(1, 1, 1, decalAlpha);
 						var angle = (Context.brushAngle + Context.brushNodesAngle) * (Math.PI / 180);
-						g.pushRotation(-angle, decalX + psizex / 2, decalY + psizey / 2);
+						g.pushRotation(angle, decalX + psizex / 2, decalY + psizey / 2);
 						#if (kha_direct3d11 || kha_direct3d12 || kha_metal || kha_vulkan)
 						g.drawScaledImage(Context.decalImage, decalX, decalY, psizex, psizey);
 						#else
@@ -875,7 +1032,6 @@ class UISidebar {
 		if (!App.uiEnabled) return;
 		if (handle != hwnd0 &&
 			handle != hwnd1 &&
-			handle != hwnd2 &&
 			handle != UIStatus.inst.statusHandle &&
 			handle != UINodes.inst.hwnd &&
 			handle != UIView2D.inst.hwnd) return; // Scalable handles
@@ -883,7 +1039,6 @@ class UISidebar {
 		if (handle == UINodes.inst.hwnd && side == SideTop && !UIView2D.inst.show) return;
 		if (handle == UIView2D.inst.hwnd && side != SideLeft) return;
 		if (handle == hwnd0 && side == SideTop) return;
-		if (handle == hwnd2 && side == SideBottom) return;
 		if (handle == UIStatus.inst.statusHandle && side != SideTop) return;
 		if (side == SideRight) return; // UI is snapped to the right side
 
@@ -910,6 +1065,5 @@ class UISidebar {
 		UIMenubar.inst.menuHandle.redraws = 2;
 		hwnd0.redraws = 2;
 		hwnd1.redraws = 2;
-		hwnd2.redraws = 2;
 	}
 }

@@ -34,6 +34,7 @@ class UIView2D {
 	public var panScale = 1.0;
 	public var uvmapShow = false;
 	public var tiledShow = false;
+	public var controlsDown = false;
 	var texType = TexBase;
 	var layerMode = View2DSelected;
 
@@ -46,7 +47,7 @@ class UIView2D {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipe.inputLayout = [vs];
 		pipe.blendSource = BlendingFactor.BlendOne;
 		pipe.blendDestination = BlendingFactor.BlendZero;
@@ -55,7 +56,7 @@ class UIView2D {
 		channelLocation = pipe.getConstantLocation("channel");
 
 		var scale = Config.raw.window_scale;
-		ui = new Zui({theme: App.theme, font: App.font, color_wheel: App.colorWheel, scaleFactor: scale});
+		ui = new Zui({ theme: App.theme, font: App.font, color_wheel: App.colorWheel, black_white_gradient: App.blackWhiteGradient, scaleFactor: scale });
 		ui.scrollEnabled = false;
 	}
 
@@ -146,9 +147,11 @@ class UIView2D {
 			else if (type == View2DAsset) {
 				tex = Project.getImage(Context.texture);
 			}
-			else { // View2DFont
+			else if (type == View2DFont) {
 				tex = Context.font.image;
-				tw = tex != null ? tex.width : 0;
+			}
+			else { // View2DNode
+				tex = Context.nodePreview;
 			}
 
 			var th = tw;
@@ -222,10 +225,12 @@ class UIView2D {
 					assetNames[i] = asset.name;
 				}
 			}
-			else { // View2DFont
+			else if (type == View2DFont) {
 				h.text = Context.font.name;
 				Context.font.name = ui.textInput(h, "", Right);
 			}
+			// else { // View2DNode
+			// }
 
 			if (h.changed) UISidebar.inst.hwnd0.redraws = 2;
 			ui.t.ACCENT_COL = ACCENT_COL;
@@ -243,7 +248,7 @@ class UIView2D {
 			ui._w = ew;
 
 			if (type == View2DLayer) {
-				layerMode = ui.combo(Id.handle({position: layerMode}), [
+				layerMode = ui.combo(Id.handle({ position: layerMode }), [
 					tr("Visible"),
 					tr("Selected"),
 				], tr("Layers"));
@@ -251,7 +256,7 @@ class UIView2D {
 				ui._y = 2;
 
 				if (!Context.layer.isMask()) {
-					texType = ui.combo(Id.handle({position: texType}), [
+					texType = ui.combo(Id.handle({ position: texType }), [
 						tr("Base Color"),
 						tr("Normal Map"),
 						tr("Occlusion"),
@@ -264,14 +269,20 @@ class UIView2D {
 					ui._y = 2;
 				}
 
-				uvmapShow = ui.check(Id.handle({selected: uvmapShow}), tr("UV Map"));
+				uvmapShow = ui.check(Id.handle({ selected: uvmapShow }), tr("UV Map"));
 				ui._x += ew + 3;
 				ui._y = 2;
 			}
 
-			tiledShow = ui.check(Id.handle({selected: tiledShow}), tr("Tiled"));
+			tiledShow = ui.check(Id.handle({ selected: tiledShow }), tr("Tiled"));
 
-			if (Context.tool == ToolPicker) {
+			if (type == View2DAsset && tex != null) { // Texture resolution
+				ui._x += ew + 3;
+				ui._y = 2;
+				ui.text(tex.width + "x" + tex.height);
+			}
+
+			if (Context.tool == ToolPicker && (type == View2DLayer || type == View2DAsset)) {
 				var cursorImg = Res.get("cursor.k");
 				var hsize = 16 * ui.SCALE();
 				var size = hsize * 2;
@@ -295,10 +306,13 @@ class UIView2D {
 			mouse.x > wx + ww ||
 			mouse.y < wy + headerh ||
 			mouse.y > wy + wh) {
+			if (UIView2D.inst.controlsDown) {
+				UINodes.getCanvasControl(ui, inst);
+			}
 			return;
 		}
 
-		var control = UINodes.getCanvasControl(ui);
+		var control = UINodes.getCanvasControl(ui, inst);
 		panX += control.panX;
 		panY += control.panY;
 		if (control.zoom != 0) {

@@ -12,7 +12,7 @@ import iron.data.Data;
 import iron.object.MeshObject;
 import iron.Scene;
 import arm.util.RenderUtil;
-import arm.Viewport;
+import arm.util.MeshUtil;
 import arm.sys.File;
 import arm.sys.Path;
 import arm.ui.UISidebar;
@@ -20,6 +20,7 @@ import arm.ui.UIFiles;
 import arm.ui.UIBox;
 import arm.ui.UINodes;
 import arm.ui.UIHeader;
+import arm.ui.BoxPreferences;
 import arm.data.LayerSlot;
 import arm.data.BrushSlot;
 import arm.data.FontSlot;
@@ -27,11 +28,14 @@ import arm.data.MaterialSlot;
 import arm.node.MakeMaterial;
 import arm.io.ImportAsset;
 import arm.io.ImportArm;
+import arm.io.ImportGpl;
 import arm.io.ImportBlend;
 import arm.io.ImportMesh;
 import arm.io.ImportTexture;
 import arm.io.ExportArm;
+import arm.io.ExportGpl;
 import arm.node.NodesBrush;
+import arm.Viewport;
 import arm.ProjectFormat;
 import arm.Enums;
 
@@ -92,7 +96,7 @@ class Project {
 					}
 					if (ui.isHovered) ui.tooltip(path);
 				}
-				if (ui.button("Clear", Left)) {
+				if (ui.button(tr("Clear"), Left)) {
 					Config.raw.recent_projects = [];
 					Config.save();
 				}
@@ -102,11 +106,22 @@ class Project {
 
 	public static function projectSave(saveAndQuit = false) {
 		if (filepath == "") {
-			projectSaveAs();
+			#if krom_ios
+			var documentDirectory = Krom.saveDialog("", "");
+			documentDirectory = documentDirectory.substr(0, documentDirectory.length - 8); // Strip /'untitled'
+			filepath = documentDirectory + "/" + kha.Window.get(0).title + ".arm";
+			#elseif krom_android
+			filepath = Krom.savePath() + "/" + kha.Window.get(0).title + ".arm";
+			#else
+			projectSaveAs(saveAndQuit);
 			return;
+			#end
 		}
+
+		#if (krom_windows || krom_linux || krom_darwin)
 		var filename = Project.filepath.substring(Project.filepath.lastIndexOf(Path.sep) + 1, Project.filepath.length - 4);
-		Window.get(0).title = filename + " - ArmorPaint";
+		Window.get(0).title = filename + " - " + Main.title;
+		#end
 
 		function _init() {
 			ExportArm.runProject();
@@ -115,13 +130,13 @@ class Project {
 		iron.App.notifyOnInit(_init);
 	}
 
-	public static function projectSaveAs() {
+	public static function projectSaveAs(saveAndQuit = false) {
 		UIFiles.show("arm", true, false, function(path: String) {
 			var f = UIFiles.filename;
 			if (f == "") f = tr("untitled");
 			filepath = path + Path.sep + f;
 			if (!filepath.endsWith(".arm")) filepath += ".arm";
-			projectSave();
+			projectSave(saveAndQuit);
 		});
 	}
 
@@ -134,12 +149,11 @@ class Project {
 					meshList.unshift("plane");
 					meshList.unshift("sphere");
 					meshList.unshift("rounded_cube");
-
 				}
 
 				ui.row([0.5, 0.5]);
-				Context.projectType = ui.combo(Id.handle({position: Context.projectType}), meshList, tr("Template"), true);
-				Context.projectAspectRatio = ui.combo(Id.handle({position: Context.projectAspectRatio}), ["1:1", "2:1", "1:2"], tr("Aspect Ratio"), true);
+				Context.projectType = ui.combo(Id.handle({ position: Context.projectType }), meshList, tr("Template"), true);
+				Context.projectAspectRatio = ui.combo(Id.handle({ position: Context.projectAspectRatio }), ["1:1", "2:1", "1:2"], tr("Aspect Ratio"), true);
 
 				@:privateAccess ui.endElement();
 				ui.row([0.5, 0.5]);
@@ -157,7 +171,9 @@ class Project {
 	}
 
 	public static function projectNew(resetLayers = true) {
+		#if (krom_windows || krom_linux || krom_darwin)
 		Window.get(0).title = Main.title;
+		#end
 		filepath = "";
 		if (Context.mergedObject != null) {
 			Context.mergedObject.remove();
@@ -256,7 +272,8 @@ class Project {
 			Context.font = fonts[0];
 			Project.setDefaultSwatches();
 			Context.swatch = Project.raw.swatches[0];
-
+			Context.pickedColor = Project.makeSwatch();
+			Context.colorPickerCallback = null;
 			History.reset();
 
 			MakeMaterial.parsePaintMaterial();
@@ -270,7 +287,6 @@ class Project {
 			Context.ddirty = 4;
 			UISidebar.inst.hwnd0.redraws = 2;
 			UISidebar.inst.hwnd1.redraws = 2;
-			UISidebar.inst.hwnd2.redraws = 2;
 
 			if (resetLayers) {
 				var aspectRatioChanged = layers[0].texpaint.width != Config.getTextureResX() || layers[0].texpaint.height != Config.getTextureResY();
@@ -364,7 +380,7 @@ class Project {
 
 		#if krom_ios
 		// Import immediately while access to resource is unlocked
-		Data.getBlob(path, function(b: kha.Blob) {});
+		// Data.getBlob(path, function(b: kha.Blob) {});
 		#end
 
 		UIBox.showCustom(function(ui: Zui) {
@@ -381,12 +397,12 @@ class Project {
 				}
 
 				if (path.toLowerCase().endsWith(".fbx")) {
-					Context.parseTransform = ui.check(Id.handle({selected: Context.parseTransform}), tr("Parse Transforms"));
+					Context.parseTransform = ui.check(Id.handle({ selected: Context.parseTransform }), tr("Parse Transforms"));
 					if (ui.isHovered) ui.tooltip(tr("Load per-object transforms from .fbx"));
 				}
 
 				if (path.toLowerCase().endsWith(".fbx") || path.toLowerCase().endsWith(".blend")) {
-					Context.parseVCols = ui.check(Id.handle({selected: Context.parseVCols}), tr("Parse Vertex Colors"));
+					Context.parseVCols = ui.check(Id.handle({ selected: Context.parseVCols }), tr("Parse Vertex Colors"));
 					if (ui.isHovered) ui.tooltip(tr("Import vertex color data"));
 				}
 
@@ -397,7 +413,17 @@ class Project {
 				if (ui.button(tr("Import")) || ui.isReturnDown) {
 					UIBox.show = false;
 					App.redrawUI();
-					ImportMesh.run(path, clearLayers, replaceExisting);
+					function doImport() {
+						ImportMesh.run(path, clearLayers, replaceExisting);
+					}
+					#if (krom_android || krom_ios)
+					arm.App.notifyOnNextFrame(function() {
+						Console.toast(tr("Importing mesh"));
+						arm.App.notifyOnNextFrame(doImport);
+					});
+					#else
+					doImport();
+					#end
 				}
 				if (ui.button(tr("?"))) {
 					File.loadUrl("https://github.com/armory3d/armorpaint_docs/blob/master/faq.md");
@@ -414,6 +440,57 @@ class Project {
 		else importAsset();
 	}
 
+	public static function unwrapMeshBox(mesh: Dynamic, done: Void->Void) {
+		UIBox.showCustom(function(ui: Zui) {
+			if (ui.tab(Id.handle(), tr("Unwrap Mesh"))) {
+
+				var unwrapPlugins = [];
+				if (BoxPreferences.filesPlugin == null) {
+					BoxPreferences.fetchPlugins();
+				}
+				for (f in BoxPreferences.filesPlugin) {
+					if (f.indexOf("uv_unwrap") >= 0 && f.endsWith(".js")) {
+						unwrapPlugins.push(f);
+					}
+				}
+				unwrapPlugins.push("equirect");
+
+				var unwrapBy = ui.combo(Id.handle(), unwrapPlugins, tr("Plugin"), true);
+
+				ui.row([0.5, 0.5]);
+				if (ui.button(tr("Cancel"))) {
+					UIBox.show = false;
+				}
+				if (ui.button(tr("Unwrap")) || ui.isReturnDown) {
+					UIBox.show = false;
+					App.redrawUI();
+					function doImport() {
+						if (unwrapBy == unwrapPlugins.length - 1) {
+							MeshUtil.equirectUnwrap(mesh);
+						}
+						else {
+							var f = unwrapPlugins[unwrapBy];
+							if (Config.raw.plugins.indexOf(f) == -1) {
+								Config.enablePlugin(f);
+								Console.info(f + " " + tr("plugin enabled"));
+							}
+							MeshUtil.unwrappers.get(f)(mesh);
+						}
+						done();
+					}
+					#if (krom_android || krom_ios)
+					arm.App.notifyOnNextFrame(function() {
+						Console.toast(tr("Unwrapping mesh"));
+						arm.App.notifyOnNextFrame(doImport);
+					});
+					#else
+					doImport();
+					#end
+				}
+			}
+		});
+	}
+
 	public static function importAsset(filters: String = null, hdrAsEnvmap = true) {
 		if (filters == null) filters = Path.textureFormats.join(",") + "," + Path.meshFormats.join(",");
 		UIFiles.show(filters, false, true, function(path: String) {
@@ -421,9 +498,10 @@ class Project {
 		});
 	}
 
-	public static function importSwatches() {
-		UIFiles.show("arm", false, false, function(path: String) {
-			ImportArm.runSwatches(path);
+	public static function importSwatches(replaceExisting = false) {
+		UIFiles.show("arm,gpl", false, false, function(path: String) {
+			if (Path.isGimpColorPalette(path)) ImportGpl.run(path, replaceExisting);
+			else ImportArm.runSwatches(path, replaceExisting);
 		});
 	}
 
@@ -439,11 +517,13 @@ class Project {
 			var i = Project.assets.indexOf(asset);
 			Data.deleteImage(asset.file);
 			Project.assetMap.remove(asset.id);
+			var oldAsset = Project.assets[i];
 			Project.assets.splice(i, 1);
 			Project.assetNames.splice(i, 1);
 			ImportTexture.run(asset.file);
 			Project.assets.insert(i, Project.assets.pop());
 			Project.assetNames.insert(i, Project.assetNames.pop());
+			if (Context.texture == oldAsset) Context.texture = Project.assets[i];
 			function _next() {
 				arm.node.MakeMaterial.parsePaintMaterial();
 				arm.util.RenderUtil.makeMaterialPreview();
@@ -497,15 +577,20 @@ class Project {
 	}
 
 	public static function exportSwatches() {
-		UIFiles.show("arm", true, false, function(path: String) {
+		UIFiles.show("arm,gpl", true, false, function(path: String) {
 			var f = UIFiles.filename;
 			if (f == "") f = tr("untitled");
-			ExportArm.runSwatches(path + Path.sep + f);
+			if (Path.isGimpColorPalette(f)) ExportGpl.run(path + Path.sep + f, f.substring(0, f.lastIndexOf(".")), Project.raw.swatches);
+			else ExportArm.runSwatches(path + Path.sep + f);
 		});
 	}
 
 	public static function makeSwatch(base = 0xffffffff): TSwatchColor {
 		return { base: base, opacity: 1.0, occlusion: 1.0, roughness: 0.0, metallic: 0.0, normal: 0xff8080ff, emission: 0.0, height: 0.0, subsurface: 0.0 };
+	}
+
+	public static function cloneSwatch(swatch: TSwatchColor): TSwatchColor {
+		return { base: swatch.base, opacity: swatch.opacity, occlusion: swatch.occlusion, roughness: swatch.roughness, metallic: swatch.metallic, normal: swatch.normal, emission: swatch.emission, height: swatch.height, subsurface: swatch.subsurface };
 	}
 
 	public static function setDefaultSwatches() {
@@ -519,6 +604,20 @@ class Project {
 	public static function getMaterialGroupByName(groupName: String): TNodeGroup {
 		for (g in materialGroups) if (g.canvas.name == groupName) return g;
 		return null;
+	}
+
+	public static function isMaterialGroupInUse(group: TNodeGroup): Bool {
+		var canvases: Array<TNodeCanvas> = [];
+		for (m in materials) canvases.push(m.canvas);
+		for (m in materialGroups) canvases.push(m.canvas);
+		for (canvas in canvases) {
+			for (n in canvas.nodes) {
+				if (n.type == "GROUP" && n.name == group.canvas.name) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 }
 

@@ -19,11 +19,15 @@ class BoxExport {
 	public static var preset: TExportPreset = null;
 	static var channels = ["base_r", "base_g", "base_b", "height", "metal", "nor_r", "nor_g", "nor_g_directx", "nor_b", "occ", "opac", "rough", "smooth", "emis", "subs", "0.0", "1.0"];
 	static var colorSpaces = ["linear", "srgb"];
+	static var exportMeshHandle = Id.handle();
 
 	public static function showTextures() {
 		UIBox.showCustom(function(ui: Zui) {
 
-			if (files == null) fetchPresets();
+			if (files == null) {
+				fetchPresets();
+				hpreset.position = files.indexOf("generic");
+			}
 			if (preset == null) {
 				parsePreset();
 				@:privateAccess hpreset.children = null;
@@ -32,6 +36,9 @@ class BoxExport {
 			tabExportTextures(ui, tr("Export Textures"));
 			tabPresets(ui);
 			tabAtlases(ui);
+			#if (krom_android || krom_ios)
+			tabExportMesh(ui, htab);
+			#end
 
 		}, 540, 310);
 	}
@@ -39,7 +46,10 @@ class BoxExport {
 	public static function showBakeMaterial() {
 		UIBox.showCustom(function(ui: Zui) {
 
-			if (files == null) fetchPresets();
+			if (files == null) {
+				fetchPresets();
+				hpreset.position = files.indexOf("generic");
+			}
 			if (preset == null) {
 				parsePreset();
 				@:privateAccess hpreset.children = null;
@@ -54,32 +64,32 @@ class BoxExport {
 	static function tabExportTextures(ui: Zui, title: String, bakeMaterial = false) {
 		if (ui.tab(htab, title)) {
 			ui.row([0.5, 0.5]);
+			#if (krom_android || krom_ios)
+			ui.combo(App.resHandle, ["128", "256", "512", "1K", "2K", "4K"], tr("Resolution"), true);
+			#else
 			ui.combo(App.resHandle, ["128", "256", "512", "1K", "2K", "4K", "8K", "16K"], tr("Resolution"), true);
+			#end
 			if (App.resHandle.changed) {
-				iron.App.notifyOnInit(Layers.resizeLayers);
-				UVUtil.uvmap = null;
-				UVUtil.uvmapCached = false;
-				UVUtil.trianglemap = null;
-				UVUtil.trianglemapCached = false;
-				UVUtil.dilatemapCached = false;
-				#if (kha_direct3d12 || kha_vulkan)
-				arm.render.RenderPathRaytrace.ready = false;
-				#end
+				Layers.onLayersResized();
 			}
+			#if (krom_android || krom_ios)
+			ui.combo(App.bitsHandle, ["8bit"], tr("Color"), true);
+			#else
 			ui.combo(App.bitsHandle, ["8bit", "16bit", "32bit"], tr("Color"), true);
+			#end
 			if (App.bitsHandle.changed) {
 				iron.App.notifyOnInit(Layers.setLayerBits);
 			}
 
 			ui.row([0.5, 0.5]);
 			if (App.bitsHandle.position == Bits8) {
-				Context.formatType = ui.combo(Id.handle({position: Context.formatType}), ["png", "jpg"], tr("Format"), true);
+				Context.formatType = ui.combo(Id.handle({ position: Context.formatType }), ["png", "jpg"], tr("Format"), true);
 			}
 			else {
-				Context.formatType = ui.combo(Id.handle({position: Context.formatType}), ["exr"], tr("Format"), true);
+				Context.formatType = ui.combo(Id.handle({ position: Context.formatType }), ["exr"], tr("Format"), true);
 			}
 			ui.enabled = Context.formatType == FormatJpg && App.bitsHandle.position == Bits8;
-			Context.formatQuality = ui.slider(Id.handle({value: Context.formatQuality}), tr("Quality"), 0.0, 100.0, true, 1);
+			Context.formatQuality = ui.slider(Id.handle({ value: Context.formatQuality }), tr("Quality"), 0.0, 100.0, true, 1);
 			ui.enabled = true;
 			ui.row([0.5, 0.5]);
 			ui.enabled = !bakeMaterial;
@@ -90,6 +100,10 @@ class BoxExport {
 			ui.combo(hpreset, files, tr("Preset"), true);
 			if (hpreset.changed) preset = null;
 
+			var layersDestinationHandle = Id.handle();
+			layersDestinationHandle.position = Context.layersDestination;
+			Context.layersDestination = ui.combo(layersDestinationHandle, [tr("Disk"), tr("Packed")], tr("Destination"), true);
+
 			@:privateAccess ui.endElement();
 
 			ui.row([0.5, 0.5]);
@@ -98,14 +112,33 @@ class BoxExport {
 			}
 			if (ui.button(tr("Export"))) {
 				UIBox.show = false;
-				var filters = App.bitsHandle.position != Bits8 ? "exr" : Context.formatType == FormatPng ? "png" : "jpg";
-				UIFiles.show(filters, true, false, function(path: String) {
-					Context.textureExportPath = path;
+				if (Context.layersDestination == DestinationPacked) {
+					Context.textureExportPath = "/";
 					function _init() {
-						ExportTexture.run(path, bakeMaterial);
+						ExportTexture.run(Context.textureExportPath, bakeMaterial);
 					}
 					iron.App.notifyOnInit(_init);
-				});
+				}
+				else {
+					var filters = App.bitsHandle.position != Bits8 ? "exr" : Context.formatType == FormatPng ? "png" : "jpg";
+					UIFiles.show(filters, true, false, function(path: String) {
+						Context.textureExportPath = path;
+						function doExport() {
+							function _init() {
+								ExportTexture.run(Context.textureExportPath, bakeMaterial);
+							}
+							iron.App.notifyOnInit(_init);
+						}
+						#if (krom_android || krom_ios)
+						arm.App.notifyOnNextFrame(function() {
+							Console.toast(tr("Exporting textures"));
+							arm.App.notifyOnNextFrame(doExport);
+						});
+						#else
+						doExport();
+						#end
+					});
+				}
 			}
 			if (ui.isHovered) ui.tooltip(tr("Export texture files") + ' (${Config.keymap.file_export_textures})');
 		}
@@ -122,7 +155,7 @@ class BoxExport {
 				UIBox.showCustom(function(ui: Zui) {
 					if (ui.tab(Id.handle(), tr("New Preset"))) {
 						ui.row([0.5, 0.5]);
-						var presetName = ui.textInput(Id.handle({text: "new_preset"}), tr("Name"));
+						var presetName = ui.textInput(Id.handle({ text: "new_preset" }), tr("Name"));
 						if (ui.button(tr("OK")) || ui.isReturnDown) {
 							newPreset(presetName);
 							fetchPresets();
@@ -146,7 +179,7 @@ class BoxExport {
 						fetchPresets();
 						preset = null;
 						hpreset.position = files.indexOf(filename.substr(0, filename.length - 5)); // Strip .json
-						Console.info("Preset '" + filename + "' imported.");
+						Console.info(tr("Preset imported:") + " " + filename);
 					}
 					else Console.error(Strings.error1());
 				});
@@ -214,7 +247,7 @@ class BoxExport {
 
 			ui.row([1 / 8]);
 			if (ui.button(tr("Add"))) {
-				preset.textures.push({name: "base", channels: ["base_r", "base_g", "base_b", "1.0"], color_space: "linear"});
+				preset.textures.push({ name: "base", channels: ["base_r", "base_g", "base_b", "1.0"], color_space: "linear" });
 				@:privateAccess hpreset.children = null;
 				savePreset();
 			}
@@ -242,36 +275,63 @@ class BoxExport {
 	}
 
 	public static function showMesh() {
+		exportMeshHandle.position = Context.exportMeshIndex;
 		UIBox.showCustom(function(ui: Zui) {
 			var htab = Id.handle();
-			if (ui.tab(htab, tr("Export Mesh"))) {
+			tabExportMesh(ui, htab);
+		});
+	}
 
-				Context.exportMeshFormat = ui.combo(Id.handle({position: Context.exportMeshFormat}), ["obj", "arm"], tr("Format"), true);
+	static function tabExportMesh(ui: Zui, htab: zui.Zui.Handle) {
+		if (ui.tab(htab, tr("Export Mesh"))) {
 
-				var applyDisplacement = ui.check(Id.handle(), tr("Apply Displacement"));
+			ui.row([1 / 2, 1 / 2]);
 
-				var tris = 0;
-				for (po in Project.paintObjects) {
-					for (inda in po.data.raw.index_arrays) {
-						tris += Std.int(inda.values.length / 3);
-					}
-				}
-				ui.text(tris + " " + tr("triangles"));
+			Context.exportMeshFormat = ui.combo(Id.handle({ position: Context.exportMeshFormat }), ["obj", "arm"], tr("Format"), true);
 
-				ui.row([0.5, 0.5]);
-				if (ui.button(tr("Cancel"))) {
-					UIBox.show = false;
-				}
-				if (ui.button(tr("Export"))) {
-					UIBox.show = false;
-					UIFiles.show(Context.exportMeshFormat == FormatObj ? "obj" : "arm", true, false, function(path: String) {
-						var f = UIFiles.filename;
-						if (f == "") f = tr("untitled");
-						ExportMesh.run(path + Path.sep + f, applyDisplacement);
-					});
+			var ar = [tr("All")];
+			for (p in Project.paintObjects) ar.push(p.name);
+			ui.combo(exportMeshHandle, ar, tr("Meshes"), true);
+
+			var applyDisplacement = ui.check(Id.handle(), tr("Apply Displacement"));
+
+			var tris = 0;
+			var pos = exportMeshHandle.position;
+			var paintObjects = pos == 0 ? Project.paintObjects : [Project.paintObjects[pos - 1]];
+			for (po in paintObjects) {
+				for (inda in po.data.raw.index_arrays) {
+					tris += Std.int(inda.values.length / 3);
 				}
 			}
-		});
+			ui.text(tris + " " + tr("triangles"));
+
+			ui.row([0.5, 0.5]);
+			if (ui.button(tr("Cancel"))) {
+				UIBox.show = false;
+			}
+			if (ui.button(tr("Export"))) {
+				UIBox.show = false;
+				UIFiles.show(Context.exportMeshFormat == FormatObj ? "obj" : "arm", true, false, function(path: String) {
+					#if (krom_android || krom_ios)
+					var f = kha.Window.get(0).title;
+					#else
+					var f = UIFiles.filename;
+					#end
+					if (f == "") f = tr("untitled");
+					function doExport() {
+						ExportMesh.run(path + Path.sep + f, exportMeshHandle.position == 0 ? null : [Project.paintObjects[exportMeshHandle.position - 1]], applyDisplacement);
+					}
+					#if (krom_android || krom_ios)
+					arm.App.notifyOnNextFrame(function() {
+						Console.toast(tr("Exporting mesh"));
+						arm.App.notifyOnNextFrame(doExport);
+					});
+					#else
+					doExport();
+					#end
+				});
+			}
+		}
 	}
 
 	public static function showMaterial() {
@@ -331,18 +391,10 @@ class BoxExport {
 	}
 
 	static function fetchPresets() {
-		#if (krom_android || krom_ios)
-
-		files = ["generic"];
-
-		#else
-
 		files = File.readDirectory(Path.data() + Path.sep + "export_presets");
 		for (i in 0...files.length) {
 			files[i] = files[i].substr(0, files[i].length - 5); // Strip .json
 		}
-
-		#end
 	}
 
 	static function parsePreset() {

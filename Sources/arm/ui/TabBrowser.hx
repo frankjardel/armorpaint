@@ -1,5 +1,6 @@
 package arm.ui;
 
+import kha.input.KeyCode;
 import zui.Zui;
 import zui.Id;
 import arm.sys.Path;
@@ -12,6 +13,12 @@ class TabBrowser {
 	static var hsearch = new Handle();
 	static var known = false;
 	static var lastPath =  "";
+
+	public static function showDirectory(directory: String) {
+		hpath.text = directory;
+		hsearch.text = "";
+		UIStatus.inst.statustab.position = 0;
+	}
 
 	@:access(zui.Zui)
 	public static function draw() {
@@ -30,13 +37,32 @@ class TabBrowser {
 			}
 
 			ui.beginSticky();
-			ui.row([bookmarksW / ui._w, (1 - bookmarksW / ui._w) * 0.8, (1 - bookmarksW / ui._w) * 0.2]);
+			if (hsearch.text != "") {
+				ui.row([bookmarksW / ui._w, (1 - bookmarksW / ui._w) * 0.75, (1 - bookmarksW / ui._w) * 0.05, (1 - bookmarksW / ui._w) * 0.17, (1 - bookmarksW / ui._w) * 0.03]);
+			}
+			else {
+				ui.row([bookmarksW / ui._w, (1 - bookmarksW / ui._w) * 0.75, (1 - bookmarksW / ui._w) * 0.05, (1 - bookmarksW / ui._w) * 0.2]);
+			}
+
 			if (ui.button("+")) {
 				Config.raw.bookmarks.push(hpath.text);
 				Config.save();
 			}
 			hpath.text = ui.textInput(hpath, tr("Path"));
-			hsearch.text = ui.textInput(hsearch, tr("Search"));
+			var refresh = false;
+			var inFocus = ui.inputX > ui._windowX && ui.inputX < ui._windowX + ui._windowW &&
+						  ui.inputY > ui._windowY && ui.inputY < ui._windowY + ui._windowH;
+			if (ui.button(tr("Refresh")) || (inFocus && ui.isKeyPressed && ui.key == kha.input.KeyCode.F5)) {
+				refresh = true;
+			}
+			hsearch.text = ui.textInput(hsearch, tr("Search"), Align.Left, true, true);
+			if (ui.isHovered) ui.tooltip(tr("ctrl+f to search") + "\n" + tr("esc to cancel"));
+			if (ui.isCtrlDown && ui.isKeyPressed && ui.key == KeyCode.F) { // Start searching via ctrl+f
+				ui.startTextEdit(hsearch);
+			}
+			if (hsearch.text != "" && (ui.button(tr("X")) || ui.isEscapeDown)) {
+				hsearch.text = "";
+			}
 			ui.endSticky();
 
 			if (lastPath != hpath.text) {
@@ -47,7 +73,7 @@ class TabBrowser {
 			var _y = ui._y;
 			ui._x = bookmarksW;
 			ui._w -= bookmarksW;
-			UIFiles.fileBrowser(ui, hpath, false, true, hsearch.text);
+			UIFiles.fileBrowser(ui, hpath, false, true, hsearch.text, refresh);
 
 			if (known) {
 				var path = hpath.text;

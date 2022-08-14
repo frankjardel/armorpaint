@@ -11,7 +11,6 @@ import kha.graphics4.BlendingFactor;
 import kha.graphics4.CompareMode;
 import iron.RenderPath;
 import iron.math.Mat4;
-import arm.ui.UISidebar;
 import arm.ui.UIHeader;
 import arm.data.LayerSlot;
 import arm.node.MakeMaterial;
@@ -66,6 +65,11 @@ class Layers {
 
 	public static inline var defaultBase = 0.5;
 	public static inline var defaultRough = 0.4;
+	#if (krom_android || krom_ios)
+	public static inline var maxLayers = 18;
+	#else
+	public static inline var maxLayers = 255;
+	#end
 
 	public static function initLayers() {
 		Project.layers[0].clear(kha.Color.fromFloats(defaultBase, defaultBase, defaultBase, 1.0));
@@ -160,7 +164,7 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeCopy.inputLayout = [vs];
 		pipeCopy.compile();
 
@@ -170,7 +174,7 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeCopyBGRA.inputLayout = [vs];
 		pipeCopyBGRA.compile();
 
@@ -181,7 +185,7 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeCopy8.inputLayout = [vs];
 		pipeCopy8.colorAttachmentCount = 1;
 		pipeCopy8.colorAttachments[0] = TextureFormat.L8;
@@ -193,7 +197,7 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeCopy128.inputLayout = [vs];
 		pipeCopy128.colorAttachmentCount = 1;
 		pipeCopy128.colorAttachments[0] = TextureFormat.RGBA128;
@@ -209,10 +213,10 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeInvert8.inputLayout = [vs];
-		pipeCopy8.colorAttachmentCount = 1;
-		pipeCopy8.colorAttachments[0] = TextureFormat.L8;
+		pipeInvert8.colorAttachmentCount = 1;
+		pipeInvert8.colorAttachments[0] = TextureFormat.L8;
 		pipeInvert8.compile();
 
 		pipeApplyMask = new PipelineState();
@@ -245,7 +249,7 @@ class Layers {
 		var vs = new VertexStructure();
 		vs.add("pos", VertexData.Float3);
 		vs.add("tex", VertexData.Float2);
-		vs.add("col", VertexData.Float4);
+		vs.add("col", VertexData.UInt8_4X_Normalized);
 		pipeCopyRGB.inputLayout = [vs];
 		pipeCopyRGB.colorWriteMasksAlpha = [false];
 		pipeCopyRGB.compile();
@@ -365,6 +369,54 @@ class Layers {
 		}
 	}
 
+	public static function duplicateLayer(l: LayerSlot) {
+		if (!l.isGroup()) {
+			var newLayer = l.duplicate();
+			Context.setLayer(newLayer);
+			var masks = l.getMasks(false);
+			if (masks != null) {
+				for (m in masks) {
+					m = m.duplicate();
+					m.parent = newLayer;
+					Project.layers.remove(m);
+					Project.layers.insert(Project.layers.indexOf(newLayer), m);
+				}
+			}
+			Context.setLayer(newLayer);
+		}
+		else {
+			var newGroup = Layers.newGroup();
+			Project.layers.remove(newGroup);
+			Project.layers.insert(Project.layers.indexOf(l) + 1, newGroup);
+			// group.show_panel = true;
+			for (c in l.getChildren()) {
+				var masks = c.getMasks(false);
+				var newLayer = c.duplicate();
+				newLayer.parent = newGroup;
+				Project.layers.remove(newLayer);
+				Project.layers.insert(Project.layers.indexOf(newGroup), newLayer);
+				if (masks != null) {
+					for (m in masks) {
+						var newMask = m.duplicate();
+						newMask.parent = newLayer;
+						Project.layers.remove(newMask);
+						Project.layers.insert(Project.layers.indexOf(newLayer), newMask);
+					}
+				}
+			}
+			var groupMasks = l.getMasks();
+			if (groupMasks != null) {
+				for (m in groupMasks) {
+					var newMask = m.duplicate();
+					newMask.parent = newGroup;
+					Project.layers.remove(newMask);
+					Project.layers.insert(Project.layers.indexOf(newGroup), newMask);
+				}
+			}
+			Context.setLayer(newGroup);
+		}
+	}
+
 	public static function applyMasks(l: LayerSlot) {
 		var masks = l.getMasks();
 
@@ -382,25 +434,9 @@ class Layers {
 		var l1 = Context.layer;
 
 		if (l1.isGroup()) {
-			var children = l1.getChildren();
-
-			if (children.length == 1 && children[0].hasMasks()) {
-				applyMasks(children[0]);
-			}
-
-			for (i in 0...children.length - 1) {
-				Context.setLayer(children[children.length - 1 - i]);
-				mergeDown();
-			}
-		
-			children[0].parent = null;
-			children[0].name = l1.name;
-			if (children[0].fill_layer != null) children[0].toPaintLayer();
-			l1.delete();
-			l1 = children[0];
-			Context.setLayer(l1);
+			l1 = mergeGroup(l1);
 		}
-		if (l1.hasMasks()) {
+		else if (l1.hasMasks()) { // It is a layer
 			applyMasks(l1);
 			Context.setLayer(l1);
 		}
@@ -408,34 +444,49 @@ class Layers {
 		var l0 = Project.layers[Project.layers.indexOf(l1) - 1];
 
 		if (l0.isGroup()) {
-			var children = l0.getChildren();
-
-			if (children.length == 1 && children[0].hasMasks()) {
-				applyMasks(children[0]);
-			}
-
-			for (i in 0...children.length - 1) {
-				Context.setLayer(children[children.length - 1 - i]);
-				mergeDown();
-			}
-		
-			children[0].parent = null;
-			children[0].name = l0.name;
-			if (children[0].fill_layer != null) children[0].toPaintLayer();
-			l0.delete();
-			l0 = children[0];
-			Context.setLayer(l1);
+			l0 = mergeGroup(l0);
 		}
-		else if (l0.hasMasks()) {
+		else if (l0.hasMasks()) { // It is a layer
 			applyMasks(l0);
-			Context.setLayer(l1);
+			Context.setLayer(l0);
 		}
 
 		mergeLayer(l0, l1);
-
-		Context.layer.delete();
+		l1.delete();
 		Context.setLayer(l0);
 		Context.layerPreviewDirty = true;
+	}
+
+	public static function mergeGroup(l: LayerSlot) {
+		if (!l.isGroup()) return null;
+
+		var children = l.getChildren();
+
+		if (children.length == 1 && children[0].hasMasks(false)) {
+			Layers.applyMasks(children[0]);
+		}
+
+		for (i in 0...children.length - 1) {
+			Context.setLayer(children[children.length - 1 - i]);
+			History.mergeLayers();
+			Layers.mergeDown();
+		}
+
+		// Now apply the group masks
+		var masks = l.getMasks();
+		if (masks != null) {
+			for (i in 0...masks.length - 1) {
+				mergeLayer(masks[i + 1], masks[i]);
+				masks[i].delete();
+			}
+			Layers.applyMask(children[0], masks[masks.length - 1]);
+		}
+
+		children[0].parent = null;
+		children[0].name = l.name;
+		if (children[0].fill_layer != null) children[0].toPaintLayer();
+		l.delete();
+		return children[0];
 	}
 
 	public static function mergeLayer(l0 : LayerSlot, l1: LayerSlot, use_mask = false) {
@@ -530,7 +581,7 @@ class Layers {
 		}
 	}
 
-	public static function flatten(heightToNormal = false, layers: Array<LayerSlot> = null): TLayerData {
+	public static function flatten(heightToNormal = false, layers: Array<LayerSlot> = null): Dynamic {
 		if (layers == null) layers = Project.layers;
 		Layers.makeTempImg();
 		Layers.makeExportImg();
@@ -708,6 +759,7 @@ class Layers {
 	public static function updateFillLayers() {
 		var _layer = Context.layer;
 		var _tool = Context.tool;
+		var _fillType = Context.fillTypeHandle.position;
 		var current: kha.graphics2.Graphics = null;
 
 		if (UIHeader.inst.worktab.position == SpaceMaterial) {
@@ -720,6 +772,7 @@ class Layers {
 
 			UIHeader.inst.worktab.position = SpacePaint;
 			Context.tool = ToolFill;
+			Context.fillTypeHandle.position = FillObject;
 			MakeMaterial.parsePaintMaterial(false);
 			Context.pdirty = 1;
 			RenderPathPaint.useLiveLayer(true);
@@ -727,6 +780,7 @@ class Layers {
 			RenderPathPaint.dilate(true, true);
 			RenderPathPaint.useLiveLayer(false);
 			Context.tool = _tool;
+			Context.fillTypeHandle.position = _fillType;
 			Context.pdirty = 0;
 			Context.rdirty = 2;
 			UIHeader.inst.worktab.position = SpaceMaterial;
@@ -745,6 +799,7 @@ class Layers {
 			if (current != null) current.end();
 			Context.pdirty = 1;
 			Context.tool = ToolFill;
+			Context.fillTypeHandle.position = FillObject;
 
 			if (hasFillLayer) {
 				var first = true;
@@ -782,10 +837,13 @@ class Layers {
 			Context.pdirty = 0;
 			Context.ddirty = 2;
 			Context.rdirty = 2;
+			Context.layersPreviewDirty = true; // Repaint all layer previews as multiple layers might have changed.
 			if (current != null) current.begin(false);
 			Context.layer = _layer;
 			setObjectMask();
 			Context.tool = _tool;
+			Context.fillTypeHandle.position = _fillType;
+			MakeMaterial.parsePaintMaterial(false);
 		}
 	}
 
@@ -794,7 +852,9 @@ class Layers {
 		if (current != null) current.end();
 
 		var _tool = Context.tool;
+		var _fillType = Context.fillTypeHandle.position;
 		Context.tool = ToolFill;
+		Context.fillTypeHandle.position = FillObject;
 		Context.pdirty = 1;
 		var _workspace = UIHeader.inst.worktab.position;
 		UIHeader.inst.worktab.position = SpacePaint;
@@ -806,6 +866,7 @@ class Layers {
 
 		Context.rdirty = 2;
 		Context.tool = _tool;
+		Context.fillTypeHandle.position = _fillType;
 		UIHeader.inst.worktab.position = _workspace;
 		if (current != null) current.begin(false);
 	}
@@ -843,7 +904,7 @@ class Layers {
 	}
 
 	public static function newLayer(clear = true): LayerSlot {
-		if (Project.layers.length > 255) return null;
+		if (Project.layers.length > maxLayers) return null;
 		var l = new LayerSlot();
 		l.objectMask = Context.layerFilter;
 		if (Context.layer.isMask()) Context.setLayer(Context.layer.parent);
@@ -861,10 +922,11 @@ class Layers {
 		return l;
 	}
 
-	public static function newMask(clear = true, parent: LayerSlot): LayerSlot {
-		if (Project.layers.length > 255) return null;
+	public static function newMask(clear = true, parent: LayerSlot, position = -1): LayerSlot {
+		if (Project.layers.length > maxLayers) return null;
 		var l = new LayerSlot("", SlotMask, parent);
-		Project.layers.insert(Project.layers.indexOf(parent), l);
+		if (position == -1) position = Project.layers.indexOf(parent);
+		Project.layers.insert(position, l);
 		Context.setLayer(l);
 		if (clear) iron.App.notifyOnInit(function() { l.clear(); });
 		Context.layerPreviewDirty = true;
@@ -872,7 +934,7 @@ class Layers {
 	}
 
 	public static function newGroup(): LayerSlot {
-		if (Project.layers.length > 255) return null;
+		if (Project.layers.length > maxLayers) return null;
 		var l = new LayerSlot("", SlotGroup);
 		Project.layers.push(l);
 		Context.setLayer(l);
@@ -902,5 +964,42 @@ class Layers {
 		var m = Layers.newMask(false, l);
 		m.clear(0x00000000, Project.getImage(asset));
 		Context.layerPreviewDirty = true;
+	}
+
+	public static function createColorLayer(baseColor: Int, occlusion = 1.0, roughness = Layers.defaultRough, metallic = 0.0 ) {
+		function _init() {
+			var l = newLayer(false);
+			History.newLayer();
+			l.uvType = UVMap;
+			l.objectMask = Context.layerFilter;
+			l.clear(baseColor, occlusion, roughness, metallic);
+		}
+		iron.App.notifyOnInit(_init);
+	}
+
+	public static function onLayersResized() {
+		iron.App.notifyOnInit(function() {
+			Layers.resizeLayers();
+			var _layer = Context.layer;
+			var _material = Context.material;
+			for (l in arm.Project.layers) {
+				if (l.fill_layer != null) {
+					Context.layer = l;
+					Context.material = l.fill_layer;
+					Layers.updateFillLayer();
+				}
+			}
+			Context.layer = _layer;
+			Context.material = _material;
+			MakeMaterial.parsePaintMaterial();
+		});
+		UVUtil.uvmap = null;
+		UVUtil.uvmapCached = false;
+		UVUtil.trianglemap = null;
+		UVUtil.trianglemapCached = false;
+		UVUtil.dilatemapCached = false;
+		#if (kha_direct3d12 || kha_vulkan)
+		arm.render.RenderPathRaytrace.ready = false;
+		#end
 	}
 }

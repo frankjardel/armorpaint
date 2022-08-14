@@ -31,7 +31,6 @@ class UIMenu {
 	public static var menuElements = 0;
 	public static var keepOpen = false;
 	public static var menuCommands: Zui->Void = null;
-	static var changeStarted = false;
 	static var showMenuFirst = true;
 	static var hideMenu = false;
 
@@ -64,7 +63,7 @@ class UIMenu {
 				if (menuButton(ui, tr("Import Envmap..."))) {
 					UIFiles.show("hdr", false, false, function(path: String) {
 						if (!path.endsWith(".hdr")) {
-							Console.error("Error: .hdr file expected");
+							Console.error(tr("Error: .hdr file expected"));
 							return;
 						}
 						ImportAsset.run(path);
@@ -73,7 +72,7 @@ class UIMenu {
 				if (menuButton(ui, tr("Import Font..."))) Project.importAsset("ttf,ttc,otf");
 				if (menuButton(ui, tr("Import Material..."))) Project.importMaterial();
 				if (menuButton(ui, tr("Import Brush..."))) Project.importBrush();
-				if (menuButton(ui, tr("Import Swatches..."))) Project.importAsset("arm");
+				if (menuButton(ui, tr("Import Swatches..."))) Project.importSwatches();
 				if (menuButton(ui, tr("Import Mesh..."))) Project.importMesh();
 				if (menuButton(ui, tr("Reimport Mesh"), Config.keymap.file_reimport_mesh)) Project.reimportMesh();
 				if (menuButton(ui, tr("Reimport Textures"), Config.keymap.file_reimport_textures)) Project.reimportTextures();
@@ -83,7 +82,10 @@ class UIMenu {
 					BoxExport.showTextures();
 				}
 				if (menuButton(ui, tr("Export Swatches..."))) Project.exportSwatches();
-				if (menuButton(ui, tr("Export Mesh..."))) BoxExport.showMesh();
+				if (menuButton(ui, tr("Export Mesh..."))) {
+					Context.exportMeshIndex = 0; // All
+					BoxExport.showMesh();
+				}
 				if (menuButton(ui, tr("Bake Material..."))) BoxExport.showBakeMaterial();
 
 				menuSeparator(ui);
@@ -128,6 +130,20 @@ class UIMenu {
 				p.raw.strength = ui.slider(envHandle, tr("Environment"), 0.0, 8.0, true);
 				if (envHandle.changed) Context.ddirty = 2;
 
+				menuFill(ui);
+				var envaHandle = Id.handle();
+				envaHandle.value = Context.envmapAngle / Math.PI * 180.0;
+				if (envaHandle.value < 0) {
+					envaHandle.value += (Std.int(-envaHandle.value / 360) + 1) * 360;
+				}
+				else if (envaHandle.value > 360) {
+					envaHandle.value -= Std.int(envaHandle.value / 360) * 360;
+				}
+				menuAlign(ui);
+				Context.envmapAngle = ui.slider(envaHandle, tr("Environment Angle"), 0.0, 360.0, true, 1) / 180.0 * Math.PI;
+				if (ui.isHovered) ui.tooltip(tr("{shortcut} and move mouse", ["shortcut" => Config.keymap.rotate_envmap]));
+				if (envaHandle.changed) Context.ddirty = 2;
+
 				if (Scene.active.lights.length > 0) {
 					var light = Scene.active.lights[0];
 
@@ -141,6 +157,25 @@ class UIMenu {
 					if (lhandle.changed) Context.ddirty = 2;
 
 					menuFill(ui);
+					var light = iron.Scene.active.lights[0];
+					var lahandle = Id.handle();
+					lahandle.value = Context.lightAngle / Math.PI * 180;
+					menuAlign(ui);
+					var newAngle = ui.slider(lahandle, tr("Light Angle"), 0.0, 360.0, true, 1) / 180 * Math.PI;
+					if (ui.isHovered) ui.tooltip(tr("{shortcut} and move mouse", ["shortcut" => Config.keymap.rotate_light]));
+					var ldiff = newAngle - Context.lightAngle;
+					if (Math.abs(ldiff) > 0.005) {
+						if (newAngle < 0) newAngle += (Std.int(-newAngle / (2 * Math.PI)) + 1) * 2 * Math.PI;
+						else if (newAngle > 2 * Math.PI) newAngle -= Std.int(newAngle / (2 * Math.PI)) * 2 * Math.PI;
+						Context.lightAngle = newAngle;
+						var m = iron.math.Mat4.identity();
+						m.self = kha.math.FastMatrix4.rotationZ(ldiff);
+						light.transform.local.multmat(m);
+						light.transform.decompose();
+						Context.ddirty = 2;
+					}
+
+					menuFill(ui);
 					var sxhandle = Id.handle();
 					sxhandle.value = light.data.raw.size;
 					menuAlign(ui);
@@ -149,21 +184,21 @@ class UIMenu {
 				}
 
 				menuFill(ui);
-				var splitViewHandle = Id.handle({selected: Context.splitView});
+				var splitViewHandle = Id.handle({ selected: Context.splitView });
 				Context.splitView = ui.check(splitViewHandle, " " + tr("Split View"));
 				if (splitViewHandle.changed) {
 					App.resize();
 				}
 
 				menuFill(ui);
-				var cullHandle = Id.handle({selected: Context.cullBackfaces});
+				var cullHandle = Id.handle({ selected: Context.cullBackfaces });
 				Context.cullBackfaces = ui.check(cullHandle, " " + tr("Cull Backfaces"));
 				if (cullHandle.changed) {
 					MakeMaterial.parseMeshMaterial();
 				}
 
 				menuFill(ui);
-				var filterHandle = Id.handle({selected: Context.textureFilter});
+				var filterHandle = Id.handle({ selected: Context.textureFilter });
 				Context.textureFilter = ui.check(filterHandle, " " + tr("Filter Textures"));
 				if (filterHandle.changed) {
 					MakeMaterial.parsePaintMaterial();
@@ -186,7 +221,7 @@ class UIMenu {
 				}
 
 				menuFill(ui);
-				var compassHandle = Id.handle({selected: Context.showCompass});
+				var compassHandle = Id.handle({ selected: Context.showCompass });
 				Context.showCompass = ui.check(compassHandle, " " + tr("Compass"));
 				if (compassHandle.changed) Context.ddirty = 2;
 
@@ -221,39 +256,25 @@ class UIMenu {
 					tr("Metallic"),
 					tr("Opacity"),
 					tr("Height"),
+					tr("Emission"),
+					tr("Subsurface"),
 					tr("TexCoord"),
 					tr("Object Normal"),
 					tr("Material ID"),
 					tr("Object ID"),
 					tr("Mask")
 				];
+				var shortcuts = ["l", "b", "n", "o", "r", "m", "a", "h", "e", "s", "t", "1", "2", "3", "4"];
 				#if (kha_direct3d12 || kha_vulkan)
 				modes.push(tr("Path Traced"));
+				shortcuts.push("p");
 				#end
 				for (i in 0...modes.length) {
 					menuFill(ui);
-					ui.radio(modeHandle, i, modes[i]);
+					ui.radio(modeHandle, i, modes[i], Config.keymap.viewport_mode + ", " + shortcuts[i]);
 				}
 
-				Context.viewportMode = modeHandle.position;
-				if (modeHandle.changed) {
-					var deferred = Context.renderMode != RenderForward && (Context.viewportMode == ViewLit || Context.viewportMode == ViewPathTrace);
-					if (deferred) {
-						RenderPath.active.commands = RenderPathDeferred.commands;
-					}
-					// else if (Context.viewportMode == ViewPathTrace) {
-					// }
-					else {
-						if (RenderPathForward.path == null) {
-							RenderPathForward.init(RenderPath.active);
-						}
-						RenderPath.active.commands = RenderPathForward.commands;
-					}
-					var _workspace = UIHeader.inst.worktab.position;
-					UIHeader.inst.worktab.position = SpacePaint;
-					MakeMaterial.parseMeshMaterial();
-					UIHeader.inst.worktab.position = _workspace;
-				}
+				if (modeHandle.changed) Context.setViewportMode(modeHandle.position);
 			}
 			else if (menuCategory == MenuCamera) {
 				if (menuButton(ui, tr("Reset"), Config.keymap.view_reset)) {
@@ -308,7 +329,7 @@ class UIMenu {
 
 				menuFill(ui);
 				var cam = Scene.active.camera;
-				Context.fovHandle = Id.handle({value: Std.int(cam.data.raw.fov * 100) / 100});
+				Context.fovHandle = Id.handle({ value: Std.int(cam.data.raw.fov * 100) / 100 });
 				menuAlign(ui);
 				cam.data.raw.fov = ui.slider(Context.fovHandle, tr("FoV"), 0.3, 2.0, true);
 				if (Context.fovHandle.changed) {
@@ -317,8 +338,15 @@ class UIMenu {
 
 				menuFill(ui);
 				menuAlign(ui);
-				Context.cameraControls = Ext.inlineRadio(ui, Id.handle({position: Context.cameraControls}), [tr("Orbit"), tr("Rotate"), tr("Fly")], Left);
+				Context.cameraControls = Ext.inlineRadio(ui, Id.handle({ position: Context.cameraControls }), [tr("Orbit"), tr("Rotate"), tr("Fly")], Left);
+				var orbitAndRotateTooltip = tr("Orbit and Rotate mode:\n{rotate_shortcut} or move right mouse button to rotate.\n{zoom_shortcut} or scroll to zoom.\n{pan_shortcut} or move middle mouse to pan.", 
+				["rotate_shortcut" => Config.keymap.action_rotate, 
+				"zoom_shortcut" => Config.keymap.action_zoom,  
+				"pan_shortcut" => Config.keymap.action_pan,
+				]);
 
+				var flyTooltip = tr("Fly mode:\nHold the right mouse button and one of the following commands:\nmove mouse to rotate.\nw, up or scroll up to move forward.\ns, down or scroll down to move backward.\na or left to move left.\nd or right to move right.\ne to move up.\nq to move down.\nHold shift to move faster or alt to move slower.");
+				if (ui.isHovered) ui.tooltip(orbitAndRotateTooltip + "\n\n" + flyTooltip);
 				menuFill(ui);
 				menuAlign(ui);
 				Context.cameraType = Ext.inlineRadio(ui, Context.camHandle, [tr("Perspective"), tr("Orthographic")], Left);
@@ -395,36 +423,60 @@ class UIMenu {
 					var save = (Path.isProtected() ? Krom.savePath() : Path.data()) + Path.sep + "tmp.txt";
 					Krom.sysCommand('wmic path win32_VideoController get name > "' + save + '"');
 					var bytes = haxe.io.Bytes.ofData(Krom.loadBlob(save));
-					var gpu = "";
-					for (i in 30...Std.int(bytes.length / 2)) {
+					var gpuRaw = "";
+					for (i in 0...Std.int(bytes.length / 2)) {
 						var c = String.fromCharCode(bytes.get(i * 2));
-						if (c == "\n") continue;
-						gpu += c;
+						gpuRaw += c;
 					}
+
+					var gpus = gpuRaw.split("\n");
+					gpus = gpus.splice(1, gpus.length - 2);
+					var gpu = "";
+					for (g in gpus) {
+						gpu += g.rtrim() + ", ";
+					}
+					gpu = gpu.substr(0, gpu.length - 2);
 					msg += '\n$gpu';
 					#else
 					// { lshw -C display }
 					#end
 
-					UIBox.showMessage(tr("About"), msg, true);
+					UIBox.showCustom(function(ui: Zui) {
+						if (ui.tab(Id.handle(), tr("About"))) {
+							Ext.textArea(ui, Id.handle({ text: msg }), false);
+
+							ui.row([1 / 3, 1 / 3, 1 / 3]);
+
+							#if (krom_windows || krom_linux || krom_darwin)
+							if (ui.button(tr("Copy"))) {
+								Krom.copyToClipboard(msg);
+							}
+							#else
+							ui.endElement();
+							#end
+
+							if (ui.button(tr("Contributors"))) {
+								File.loadUrl("https://github.com/armory3d/armorpaint/graphs/contributors");
+							}
+							if (ui.button(tr("OK"))) {
+								UIBox.show = false;
+								App.redrawUI();
+							}
+						}
+					});
 				}
 			}
 		}
 
-		var first = showMenuFirst;
-		hideMenu = ui.comboSelectedHandle == null && !changeStarted && !keepOpen && !first && (ui.changed || ui.inputReleased || ui.inputReleasedR || ui.isEscapeDown);
+		hideMenu = ui.comboSelectedHandle == null && !keepOpen && !showMenuFirst && (ui.changed || ui.inputReleased || ui.inputReleasedR || ui.isEscapeDown);
 		showMenuFirst = false;
 		keepOpen = false;
-		if (ui.inputReleased) changeStarted = false;
 
 		ui.t.BUTTON_COL = _BUTTON_COL;
 		ui.t.ELEMENT_OFFSET = _ELEMENT_OFFSET;
 		ui.t.ELEMENT_H = _ELEMENT_H;
 		ui.endRegion();
-	}
 
-	public static function update() {
-		//var ui = App.uiMenu;
 		if (hideMenu) {
 			show = false;
 			App.redrawUI();

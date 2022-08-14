@@ -24,6 +24,7 @@ import arm.ui.UIToolbar;
 import arm.ui.UINodes;
 import arm.ui.UIView2D;
 import arm.ui.UIHeader;
+import arm.ui.UIStatus;
 import arm.ui.BoxPreferences;
 import arm.node.MakeMaterial;
 import arm.Enums;
@@ -39,7 +40,7 @@ class Context {
 	public static var paintObject: MeshObject;
 	public static var mergedObject: MeshObject = null; // For object mask
 	public static var mergedObjectIsAtlas = false; // Only objects referenced by atlas are merged
-	public static var tool = 0;
+	public static var tool = ToolBrush;
 
 	public static var ddirty = 0; // depth
 	public static var pdirty = 0; // paint
@@ -52,6 +53,8 @@ class Context {
 	public static var nodePreview: Image = null;
 	public static var nodePreviews: Map<String, Image> = null;
 	public static var nodePreviewsUsed: Array<String> = null;
+	public static var maskPreviewRgba32: kha.Image = null;
+	public static var maskPreviewLast: LayerSlot = null;
 
 	public static var colorIdPicked = false;
 	public static var splitView = false;
@@ -61,12 +64,15 @@ class Context {
 	public static var savedCamera = Mat4.identity();
 
 	public static var swatch: TSwatchColor;
+	public static var pickedColor: TSwatchColor = Project.makeSwatch();
+	public static var colorPickerCallback: TSwatchColor->Void = null;
+	public static var colorPickerPreviousTool = ToolBrush;
 	public static var materialIdPicked = 0;
 	public static var uvxPicked = 0.0;
 	public static var uvyPicked = 0.0;
 	public static var pickerSelectMaterial = true;
 	public static var pickerMaskHandle = new Handle();
-	public static var pickPosNor = false;
+	public static var pickPosNorTex = false;
 	public static var posXPicked = 0.0;
 	public static var posYPicked = 0.0;
 	public static var posZPicked = 0.0;
@@ -82,14 +88,15 @@ class Context {
 	public static var previewEnvmap: Image = null;
 	public static var envmapLoaded = false;
 	public static var showEnvmap = false;
-	public static var showEnvmapHandle = new Handle({selected: false});
+	public static var showEnvmapHandle = new Handle({ selected: false });
 	public static var showEnvmapBlur = false;
-	public static var showEnvmapBlurHandle = new Handle({selected: false});
+	public static var showEnvmapBlurHandle = new Handle({ selected: false });
 	public static var envmapAngle = 0.0;
+	public static var lightAngle = 0.0;
 	public static var drawWireframe = false;
-	public static var wireframeHandle = new Handle({selected: false});
+	public static var wireframeHandle = new Handle({ selected: false });
 	public static var drawTexels = false;
-	public static var texelsHandle = new Handle({selected: false});
+	public static var texelsHandle = new Handle({ selected: false });
 	public static var cullBackfaces = true;
 	public static var textureFilter = true;
 
@@ -97,6 +104,7 @@ class Context {
 	public static var formatType = FormatPng;
 	public static var formatQuality = 100.0;
 	public static var layersExport = ExportVisible;
+	public static var layersDestination = DestinationDisk;
 	public static var splitBy = SplitObject;
 	public static var parseTransform = true;
 	public static var parseVCols = false;
@@ -122,6 +130,7 @@ class Context {
 	public static var viewportShader: NodeShader->String = null;
 	public static var hscaleWasChanged = false;
 	public static var exportMeshFormat = FormatObj;
+	public static var exportMeshIndex = 0;
 	public static var cacheDraws = false;
 	public static var packAssetsOnExport = true;
 	public static var writeIconOnExport = false;
@@ -129,6 +138,17 @@ class Context {
 	public static var textToolImage: Image = null;
 	public static var textToolText: String;
 	public static var particleMaterial: MaterialData = null;
+	#if arm_physics
+	public static var particlePhysics = false;
+	public static var particleHitX = 0.0;
+	public static var particleHitY = 0.0;
+	public static var particleHitZ = 0.0;
+	public static var lastParticleHitX = 0.0;
+	public static var lastParticleHitY = 0.0;
+	public static var lastParticleHitZ = 0.0;
+	public static var particleTimer: iron.system.Tween.TAnim = null;
+	public static var paintBody: arm.plugin.PhysicsBody = null;
+	#end
 
 	public static var layerFilter = 0;
 	public static var runBrush: Int->Void = null;
@@ -171,7 +191,9 @@ class Context {
 	public static var brushNodesRadius = 1.0;
 	public static var brushNodesOpacity = 1.0;
 	public static var brushMaskImage: Image = null;
+	public static var brushMaskImageIsAlpha = false;
 	public static var brushStencilImage: Image = null;
+	public static var brushStencilImageIsAlpha = false;
 	public static var brushStencilX = 0.02;
 	public static var brushStencilY = 0.02;
 	public static var brushStencilScale = 0.9;
@@ -184,17 +206,17 @@ class Context {
 	public static var brushDirectional = false;
 
 	public static var brushRadius = 0.5;
-	public static var brushRadiusHandle = new Handle({value: 0.5});
+	public static var brushRadiusHandle = new Handle({ value: 0.5 });
 	public static var brushDecalMaskRadius = 0.5;
-	public static var brushDecalMaskRadiusHandle = new Handle({value: 0.5});
+	public static var brushDecalMaskRadiusHandle = new Handle({ value: 0.5 });
 	public static var brushScaleX = 1.0;
-	public static var brushScaleXHandle = new Handle({value: 1.0});
+	public static var brushScaleXHandle = new Handle({ value: 1.0 });
 	public static var brushBlending = BlendMix;
 	public static var brushOpacity = 1.0;
-	public static var brushOpacityHandle = new Handle({value: 1.0});
+	public static var brushOpacityHandle = new Handle({ value: 1.0 });
 	public static var brushScale = 1.0;
 	public static var brushAngle = 0.0;
-	public static var brushAngleHandle = new Handle({value: 0.0});
+	public static var brushAngleHandle = new Handle({ value: 0.0 });
 	public static var brushHardness = 0.8;
 	public static var brushLazyRadius = 0.0;
 	public static var brushLazyStep = 0.0;
@@ -253,12 +275,39 @@ class Context {
 	public static var vxaoAperture = 1.2;
 	public static var textureExportPath = "";
 	public static var lastStatusPosition = 0;
+	public static var lastHtab0Position = 0;
+	public static var maximizedSidebarWidth = 0;
 	public static var cameraControls = ControlsOrbit;
 	public static var dragDestination = 0;
+	#if (krom_android || krom_ios)
+	public static var penPaintingOnly = false; // Reject painting with finger when using pen
+	#end
 
 	public static function selectMaterial(i: Int) {
 		if (Project.materials.length <= i) return;
 		setMaterial(Project.materials[i]);
+	}
+
+	public static function setViewportMode(mode: ViewportMode) {
+		if (mode == viewportMode) return;
+
+		viewportMode = mode;
+		var deferred = Context.renderMode != RenderForward && (Context.viewportMode == ViewLit || Context.viewportMode == ViewPathTrace);
+		if (deferred) {
+			RenderPath.active.commands = RenderPathDeferred.commands;
+		}
+		// else if (Context.viewportMode == ViewPathTrace) {
+		// }
+		else {
+			if (RenderPathForward.path == null) {
+				RenderPathForward.init(RenderPath.active);
+			}
+			RenderPath.active.commands = RenderPathForward.commands;
+		}
+		var _workspace = UIHeader.inst.worktab.position;
+		UIHeader.inst.worktab.position = SpacePaint;
+		MakeMaterial.parseMeshMaterial();
+		UIHeader.inst.worktab.position = _workspace;
 	}
 
 	public static function setMaterial(m: MaterialSlot) {
@@ -302,7 +351,7 @@ class Context {
 		font = f;
 		RenderUtil.makeTextPreview();
 		RenderUtil.makeDecalPreview();
-		UISidebar.inst.hwnd2.redraws = 2;
+		UIStatus.inst.statusHandle.redraws = 2;
 		UIView2D.inst.hwnd.redraws = 2;
 	}
 

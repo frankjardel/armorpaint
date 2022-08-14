@@ -48,6 +48,7 @@ typedef TKeymap = {
 	public var view_zoom_in: String;
 	public var view_zoom_out: String;
 	public var view_distract_free: String;
+	public var viewport_mode: String;
 	public var tool_brush: String;
 	public var tool_eraser: String;
 	public var tool_fill: String;
@@ -56,7 +57,6 @@ typedef TKeymap = {
 	public var tool_clone: String;
 	public var tool_blur: String;
 	public var tool_particle: String;
-	public var tool_bake: String;
 	public var tool_colorid: String;
 	public var tool_picker: String;
 	public var swap_brush_eraser: String;

@@ -20,6 +20,7 @@ import iron.Scene;
 import iron.RenderPath;
 import arm.ProjectFormat;
 import arm.ui.UISidebar;
+import arm.ui.UIStatus;
 import arm.ui.UIFiles;
 import arm.sys.Path;
 import arm.sys.File;
@@ -89,7 +90,11 @@ class ImportArm {
 			Project.projectNew(importAsMesh);
 			Project.filepath = path;
 			UIFiles.filename = path.substring(path.lastIndexOf(Path.sep) + 1, path.lastIndexOf("."));
-			Window.get(0).title = UIFiles.filename + " - ArmorPaint";
+			#if (krom_android || krom_ios)
+			Window.get(0).title = UIFiles.filename;
+			#else
+			Window.get(0).title = UIFiles.filename + " - " + Main.title;
+			#end
 
 			// Import as mesh instead
 			if (importAsMesh) {
@@ -98,9 +103,14 @@ class ImportArm {
 			}
 
 			// Save to recent
+			#if krom_ios
+			var recent_path = path.substr(path.lastIndexOf("/") + 1);
+			#else
+			var recent_path = path;
+			#end
 			var recent = Config.raw.recent_projects;
-			recent.remove(path);
-			recent.unshift(path);
+			recent.remove(recent_path);
+			recent.unshift(recent_path);
 			Config.save();
 
 			Project.raw = project;
@@ -354,7 +364,6 @@ class ImportArm {
 			Context.ddirty = 4;
 			UISidebar.inst.hwnd0.redraws = 2;
 			UISidebar.inst.hwnd1.redraws = 2;
-			UISidebar.inst.hwnd2.redraws = 2;
 
 			Data.deleteBlob(path);
 		});
@@ -493,19 +502,29 @@ class ImportArm {
 		Data.deleteBlob(path);
 	}
 
-	public static function runSwatches(path: String) {
+	public static function runSwatches(path: String, replaceExisting = false) {
 		Data.getBlob(path, function(b: Blob) {
 			var project: TProjectFormat = ArmPack.decode(b.toBytes());
 			if (project.version == null) { Data.deleteBlob(path); return; }
-			runSwatchesFromProject(project, path);
+			runSwatchesFromProject(project, path, replaceExisting);
 		});
 	}
 
-	public static function runSwatchesFromProject(project: TProjectFormat, path: String) {
-		for (s in project.swatches) {
-			Project.raw.swatches.push(s);
+	public static function runSwatchesFromProject(project: TProjectFormat, path: String, replaceExisting = false) {
+		if (replaceExisting) {
+			Project.raw.swatches = [];
+
+			if (project.swatches == null) { // No swatches contained
+				Project.raw.swatches.push(Project.makeSwatch());
+			}
 		}
-		UISidebar.inst.hwnd2.redraws = 2;
+
+		if (project.swatches != null) {
+			for (s in project.swatches) {
+				Project.raw.swatches.push(s);
+			}
+		}
+		UIStatus.inst.statusHandle.redraws = 2;
 		Data.deleteBlob(path);
 	}
 
@@ -524,6 +543,10 @@ class ImportArm {
 		for (node in nodes) {
 			if (node.type == "TEX_IMAGE") {
 				node.buttons[0].default_value = App.getAssetIndex(node.buttons[0].data);
+
+				if (node.buttons[1].data.length == 2) { // TODO: deprecated
+					node.buttons[1].data = [tr("Auto"), tr("Linear"), tr("sRGB"), tr("DirectX Normal Map")];
+				}
 			}
 			else if (node.type == "VALTORGB") { // TODO: deprecated
 				var but = node.buttons[0];

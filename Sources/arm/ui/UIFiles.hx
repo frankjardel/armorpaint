@@ -97,14 +97,14 @@ class UIFiles {
 
 	@:access(zui.Zui)
 	@:access(arm.sys.File)
-	public static function fileBrowser(ui: Zui, handle: Handle, foldersOnly = false, dragFiles = false, search = ""): String {
+	public static function fileBrowser(ui: Zui, handle: Handle, foldersOnly = false, dragFiles = false, search = "", refresh = false): String {
 
 		var icons = Res.get("icons.k");
 		var folder = Res.tile50(icons, 2, 1);
 		var file = Res.tile50(icons, 3, 1);
 		var isCloud = handle.text.startsWith("cloud");
 
-		if (isCloud && File.cloud == null) File.initCloud();
+		if (isCloud && File.cloud == null) File.initCloud(function() { UIStatus.inst.statusHandle.redraws = 3; });
 		if (isCloud && File.readDirectory("cloud", false).length == 0) return handle.text;
 
 		#if krom_ios
@@ -113,17 +113,21 @@ class UIFiles {
 		#end
 
 		if (handle.text == "") handle.text = defaultPath;
-		if (handle.text != lastPath || search != lastSearch) {
+		if (handle.text != lastPath || search != lastSearch || refresh) {
 			files = [];
 
 			// Up directory
 			var i1 = handle.text.indexOf(Path.sep);
 			var nested = i1 > -1 && handle.text.length - 1 > i1;
+			#if krom_windows
+			// Server addresses like \\server are not nested
+			nested = nested && !(handle.text.length >= 2 && handle.text.charAt(0) == Path.sep && handle.text.charAt(1) == Path.sep && handle.text.lastIndexOf(Path.sep) == 1);
+			#end
 			if (nested) files.push("..");
 
 			var dirPath = handle.text;
 			#if krom_ios
-			if (!isCloud) dirPath = documentDirectory;
+			if (!isCloud) dirPath = documentDirectory + dirPath;
 			#end
 			var filesAll = File.readDirectory(dirPath, foldersOnly);
 
@@ -142,6 +146,7 @@ class UIFiles {
 		var slotw = Std.int(70 * ui.SCALE());
 		var num = Std.int(ui._w / slotw);
 
+		ui._y += 4; // Don't cut off the border around selected materials
 		// Directory contents
 		for (row in 0...Std.int(Math.ceil(files.length / num))) {
 
@@ -170,10 +175,11 @@ class UIFiles {
 				var uiy = ui._y;
 				var state = Idle;
 				var generic = true;
+				var icon: kha.Image = null;
 
 				if (isCloud && f != ".." && !offline) {
 					if (iconMap == null) iconMap = [];
-					var icon = iconMap.get(handle.text + Path.sep + f);
+					icon = iconMap.get(handle.text + Path.sep + f);
 					if (icon == null) {
 						var filesAll = File.readDirectory(handle.text);
 						var iconFile = f.substr(0, f.lastIndexOf(".")) + "_icon.jpg";
@@ -198,6 +204,7 @@ class UIFiles {
 											icon.g2.pipeline = null;
 											icon.g2.end();
 											iconMap.set(handle.text + Path.sep + f, icon);
+											UIStatus.inst.statusHandle.redraws = 3;
 										});
 									});
 								}
@@ -206,15 +213,25 @@ class UIFiles {
 						}
 					}
 					if (icon != null) {
-						state = ui.image(icon, 0xffffffff, 50 * ui.SCALE());
-						if (ui.isHovered) ui.tooltipImage(icon);
+						var w = 50;
+						if (i == selected) {
+							ui.fill(-2,        -2, w + 4,     2, ui.t.HIGHLIGHT_COL);
+							ui.fill(-2,     w + 2, w + 4,     2, ui.t.HIGHLIGHT_COL);
+							ui.fill(-2,         0,     2, w + 4, ui.t.HIGHLIGHT_COL);
+							ui.fill(w + 2 ,    -2,     2, w + 6, ui.t.HIGHLIGHT_COL);
+						}
+						state = ui.image(icon, 0xffffffff, w * ui.SCALE());
+						if (ui.isHovered) {
+							ui.tooltipImage(icon);
+							ui.tooltip(f);
+						}
 						generic = false;
 					}
 				}
 				if (f.endsWith(".arm") && !isCloud) {
 					if (iconMap == null) iconMap = [];
 					var key = handle.text + Path.sep + f;
-					var icon = iconMap.get(key);
+					icon = iconMap.get(key);
 					if (!iconMap.exists(key)) {
 						var blobPath = key;
 						#if krom_ios
@@ -226,11 +243,25 @@ class UIFiles {
 							var bytesIcon = raw.material_icons[0];
 							icon = kha.Image.fromBytes(Lz4.decode(bytesIcon, 256 * 256 * 4), 256, 256);
 						}
+						if (raw.mesh_icons != null) {
+							var bytesIcon = raw.mesh_icons[0];
+							icon = kha.Image.fromBytes(Lz4.decode(bytesIcon, 256 * 256 * 4), 256, 256);
+						}
 						iconMap.set(key, icon);
 					}
 					if (icon != null) {
-						state = ui.image(icon, 0xffffffff, 50 * ui.SCALE());
-						if (ui.isHovered) ui.tooltipImage(icon);
+						var w = 50;
+						if (i == selected) {
+							ui.fill(-2,        -2, w + 4,     2, ui.t.HIGHLIGHT_COL);
+							ui.fill(-2,     w + 2, w + 4,     2, ui.t.HIGHLIGHT_COL);
+							ui.fill(-2,         0,     2, w + 4, ui.t.HIGHLIGHT_COL);
+							ui.fill(w + 2 ,    -2,     2, w + 6, ui.t.HIGHLIGHT_COL);
+						}
+						state = ui.image(icon, 0xffffffff, w * ui.SCALE());
+						if (ui.isHovered) {
+							ui.tooltipImage(icon);
+							ui.tooltip(f);
+						}
 						generic = false;
 					}
 				}
@@ -240,7 +271,6 @@ class UIFiles {
 				}
 
 				if (state == Started) {
-
 					if (f != ".." && dragFiles) {
 						var mouse = Input.getMouse();
 						App.dragOffX = -(mouse.x - uix - ui._windowX - 3);
@@ -253,11 +283,13 @@ class UIFiles {
 							App.dragFile += Path.sep;
 						}
 						App.dragFile += f;
+						App.dragFileIcon = icon;
 					}
 
 					selected = i;
 					if (Time.time() - Context.selectTime < 0.25) {
 						App.dragFile = null;
+						App.dragFileIcon = null;
 						App.isDragging = false;
 						handle.changed = ui.changed = true;
 						if (f == "..") { // Up

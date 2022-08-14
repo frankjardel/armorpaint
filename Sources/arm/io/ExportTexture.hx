@@ -12,6 +12,7 @@ import arm.ui.UISidebar;
 import arm.ui.UIFiles;
 import arm.ui.BoxExport;
 import arm.sys.Path;
+import arm.ProjectFormat;
 import arm.Enums;
 
 class ExportTexture {
@@ -72,7 +73,7 @@ class ExportTexture {
 					for (objectIndex in 0...Project.atlasObjects.length) {
 						if (Project.atlasObjects[objectIndex] == atlasIndex) {
 							for (l in Project.layers) {
-								if (l.getObjectMask() - 1 == objectIndex) layers.push(l);
+								if (l.getObjectMask() == 0 /* shared object */ || l.getObjectMask() - 1 == objectIndex) layers.push(l);
 							}
 						}
 					}
@@ -88,7 +89,12 @@ class ExportTexture {
 		trace("Textures exported in " + (iron.system.Time.realTime() - timer));
 		#end
 
-		Console.info("Textures exported.");
+		#if krom_ios
+		Console.info(tr("Textures exported") + " ('Files/On My iPad/" + Main.title + "')");
+		#else
+		Console.info(tr("Textures exported"));
+		#end
+		@:privateAccess UIFiles.lastPath = "";
 	}
 
 	static function runBakeMaterial(path: String) {
@@ -123,7 +129,11 @@ class ExportTexture {
 		var textureSizeX = Config.getTextureResX();
 		var textureSizeY = Config.getTextureResY();
 		var formatQuality = Context.formatQuality;
+		#if (krom_android || krom_ios)
+		var f = kha.Window.get(0).title;
+		#else
 		var f = UIFiles.filename;
+		#end
 		if (f == "") f = tr("untitled");
 		var formatType = Context.formatType;
 		var bits = App.bitsHandle.position == Bits8 ? 8 : 16;
@@ -317,8 +327,8 @@ class ExportTexture {
 					else if (c == "opac") copyChannel(pixpaint, 3, pix, i, t.color_space == "linear");
 					else if (c == "rough") copyChannel(pixpaint_pack, 1, pix, i, t.color_space == "linear");
 					else if (c == "smooth") copyChannelInv(pixpaint_pack, 1, pix, i, t.color_space == "linear");
-					else if (c == "emis") extractChannel(pixpaint_nor, 3, pix, i, 255, t.color_space == "linear");
-					else if (c == "subs") extractChannel(pixpaint_nor, 3, pix, i, 254, t.color_space == "linear");
+					else if (c == "emis") extractChannel(pixpaint_nor, 3, pix, i, 3, 1, t.color_space == "linear");
+					else if (c == "subs") extractChannel(pixpaint_nor, 3, pix, i, 3, 2, t.color_space == "linear");
 					else if (c == "0.0") setChannel(0, pix, i);
 					else if (c == "1.0") setChannel(255, pix, i);
 				}
@@ -337,6 +347,23 @@ class ExportTexture {
 		if (type == 2 && off == 0) format = 3; // RRR1
 		if (type == 2 && off == 1) format = 4; // GGG1
 		if (type == 2 && off == 2) format = 5; // BBB1
+		if (type == 2 && off == 3) format = 6; // AAA1
+
+		if (Context.layersDestination == DestinationPacked) {
+			var image = kha.Image.fromBytes(pixels, resX, resY);
+			iron.data.Data.cachedImages.set(file, image);
+			var ar = file.split(Path.sep);
+			var name = ar[ar.length - 1];
+			var asset: TAsset = {name: name, file: file, id: Project.assetId++};
+			Project.assets.push(asset);
+			if (Project.raw.assets == null) Project.raw.assets = [];
+			Project.raw.assets.push(asset.file);
+			Project.assetNames.push(asset.name);
+			Project.assetMap.set(asset.id, image);
+			@:privateAccess ExportArm.packAssets(Project.raw, [asset]);
+			return;
+		}
+
 		if (bits == 8 && Context.formatType == FormatPng) {
 			Krom.writePng(file, pixels.getData(), resX, resY, format);
 		}
@@ -364,9 +391,9 @@ class ExportTexture {
 		if (!linear) toSrgb(to, toChannel);
 	}
 
-	static function extractChannel(from: Bytes, fromChannel: Int, to: Bytes, toChannel: Int, mask: Int, linear = true) {
+	static function extractChannel(from: Bytes, fromChannel: Int, to: Bytes, toChannel: Int, step: Int, mask: Int, linear = true) {
 		for (i in 0...Std.int(to.length / 4)) {
-			to.set(i * 4 + toChannel, from.get(i * 4 + fromChannel) == mask ? 255 : 0);
+			to.set(i * 4 + toChannel, from.get(i * 4 + fromChannel) % step == mask ? 255 : 0);
 		}
 		if (!linear) toSrgb(to, toChannel);
 	}

@@ -10,6 +10,7 @@ import iron.object.MeshObject;
 import iron.data.Data;
 import arm.node.MakeMaterial;
 import arm.data.MaterialSlot;
+import arm.ProjectFormat.TSwatchColor;
 import arm.util.RenderUtil;
 import arm.sys.Path;
 import arm.Enums;
@@ -83,6 +84,19 @@ class TabMaterials {
 					var uiy = ui._y;
 					var tile = ui.SCALE() > 1 ? 100 : 50;
 					var state = Project.materials[i].previewReady ? ui.image(img) : ui.image(Res.get("icons.k"), -1, null, tile, tile, tile, tile);
+					var isTyping = ui.isTyping || UIView2D.inst.ui.isTyping || UINodes.inst.ui.isTyping;
+					if (!isTyping) {
+						if (i < 9 && Operator.shortcut(Config.keymap.select_material, ShortcutDown)) {
+							var number = Std.string(i + 1) ;
+							var width = ui.ops.font.width(ui.fontSize, number) + 10;
+							var height = ui.ops.font.height(ui.fontSize);
+							ui.g.color = ui.t.TEXT_COL;
+							ui.g.fillRect(uix, uiy, width, height);
+							ui.g.color = ui.t.ACCENT_COL;
+							ui.g.drawString(number, uix + 5, uiy);
+						}
+					}
+
 					if (state == State.Started && ui.inputY > ui._windowY) {
 						if (Context.material != Project.materials[i]) {
 							Context.selectMaterial(i);
@@ -138,14 +152,8 @@ class TabMaterials {
 								iron.App.notifyOnInit(_init);
 							}
 
-							if (Project.materials.length > 1 && ui.button(tr("Delete"), Left)) {
-								for (l in Project.layers) if (l.fill_layer == m) l.fill_layer = null;
-								History.deleteMaterial();
-								Context.selectMaterial(i == 0 ? 1 : 0);
-								Project.materials.splice(i, 1);
-								UISidebar.inst.hwnd1.redraws = 2;
-								for (m in Project.materials) updateMaterialPointers(m.canvas.nodes, i);
-								for (n in m.canvas.nodes) UINodes.onNodeRemove(n);
+							if (Project.materials.length > 1 && ui.button(tr("Delete"), Left, "delete")) {
+								deleteMaterial(m);
 							}
 
 							var baseHandle = Id.handle().nest(m.id, {selected: m.paintBase});
@@ -180,13 +188,20 @@ class TabMaterials {
 							}
 						}, 14 + add);
 					}
-					if (ui.isHovered) ui.tooltipImage(imgFull);
+					if (ui.isHovered) {
+						ui.tooltipImage(imgFull);
+						if (i < 9) ui.tooltip(Project.materials[i].canvas.name + " - (" + Config.keymap.select_material + " " + (i + 1) + ")");
+						else ui.tooltip(Project.materials[i].canvas.name);
+					}
 
 					if (Config.raw.show_asset_names) {
 						ui._x = uix;
 						ui._y += slotw * 0.9;
 						ui.text(Project.materials[i].canvas.name, Center);
-						if (ui.isHovered) ui.tooltip(Project.materials[i].canvas.name);
+						if (ui.isHovered) {
+							if (i < 9) ui.tooltip(Project.materials[i].canvas.name + " - (" + Config.keymap.select_material + " " + (i + 1) + ")");
+							else ui.tooltip(Project.materials[i].canvas.name);
+						}
 						ui._y -= slotw * 0.9;
 						if (i == Project.materials.length - 1) {
 							ui._y += j == num - 1 ? imgw : imgw + ui.ELEMENT_H() + ui.ELEMENT_OFFSET();
@@ -199,6 +214,13 @@ class TabMaterials {
 				#if kha_opengl
 				ui.imageInvertY = false; // Material preview
 				#end
+			}
+
+			var inFocus = ui.inputX > ui._windowX && ui.inputX < ui._windowX + ui._windowW &&
+						  ui.inputY > ui._windowY && ui.inputY < ui._windowY + ui._windowH;
+			if (inFocus && ui.isDeleteDown && Project.materials.length > 1) {
+				ui.isDeleteDown = false;
+				deleteMaterial(Context.material);
 			}
 		}
 	}
@@ -224,5 +246,35 @@ class TabMaterials {
 				}
 			}
 		}
+	}
+
+	public static function acceptSwatchDrag(swatch: TSwatchColor) {
+		Context.material = new MaterialSlot(Project.materials[0].data);
+		for (node in Context.material.canvas.nodes) {
+			if (node.type == "RGB" ) {
+				node.outputs[0].default_value = [swatch.base.R, swatch.base.G, swatch.base.B, swatch.base.A];
+			}
+			else if (node.type == "OUTPUT_MATERIAL_PBR") {
+				node.inputs[1].default_value = swatch.opacity;
+				node.inputs[2].default_value = swatch.occlusion;
+				node.inputs[3].default_value = swatch.roughness;
+				node.inputs[4].default_value = swatch.metallic;
+				node.inputs[7].default_value = swatch.height;
+			}
+		}
+		Project.materials.push(Context.material);
+		updateMaterial();
+		History.newMaterial();
+	}
+
+	static function deleteMaterial(m: MaterialSlot) {
+		var i = Project.materials.indexOf(m);
+		for (l in Project.layers) if (l.fill_layer == m) l.fill_layer = null;
+		History.deleteMaterial();
+		Context.selectMaterial(i == Project.materials.length - 1 ? i - 1 : i + 1);
+		Project.materials.splice(i, 1);
+		UISidebar.inst.hwnd1.redraws = 2;
+		for (m in Project.materials) updateMaterialPointers(m.canvas.nodes, i);
+		for (n in m.canvas.nodes) UINodes.onNodeRemove(n);
 	}
 }
