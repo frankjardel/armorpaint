@@ -1,10 +1,3 @@
-dependencies (Ubuntu/Debian etc..):
-================
-sudo apt install make g++ libxinerama-dev libxrandr-dev libasound2-dev libxi-dev mesa-common-dev libgl-dev libxcursor-dev libvulkan-dev libudev-dev libgtk-3-dev clang
-
-Dependencies (Fedora):
-sudo dnf install make clang libXinerama-devel libXrandr-devel alsa-lib-devel libXi-devel mesa-libGL-devel libXcursor-devel vulkan-devel gtk3-devel libstdc++-static libudev-devel wayland-protocols-devel
-
 ![](https://armorpaint.org/img/git.jpg)
 
 armorpaint
