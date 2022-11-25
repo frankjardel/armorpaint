@@ -79,7 +79,7 @@ class MakeMesh {
 		if (Context.tool == ToolColorId) {
 			textureCount++;
 			frag.add_uniform('sampler2D texcolorid', '_texcolorid');
-			frag.write('fragColor[0] = vec4(n.xy, 1.0, packFloatInt16(0.0, uint(0)));'); // met/rough
+			frag.write('fragColor[0] = vec4(n.xy, 1.0, packFloatInt16(0.0, uint(0)));');
 			frag.write('vec3 idcol = pow(textureLod(texcolorid, texCoord, 0.0).rgb, vec3(2.2, 2.2, 2.2));');
 			frag.write('fragColor[1] = vec4(idcol.rgb, 1.0);'); // occ
 		}
@@ -487,13 +487,10 @@ class MakeMesh {
 	}
 
 	static inline function getMaxTextures(): Int {
-		#if (kha_direct3d11 || kha_metal)
+		#if kha_direct3d11
 		return 128 - 66;
-		#elseif (kha_direct3d12 || kha_vulkan)
-		// CommandList5Impl->textureCount = 16;
-		return 16 - 3;
 		#else
-		return 16 - 3;
+		return 16 - 3; // G4onG5/G4.c.h MAX_TEXTURES
 		#end
 	}
 }
